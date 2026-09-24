@@ -315,6 +315,22 @@ public sealed partial class AppHost : IDisposable
         }
     }
 
+    /// <summary>
+    /// Replaces the data folder with a backup (password already checked) and reopens the vault with it.
+    /// Returns the snapshot of the previous data, which is the way back.
+    /// </summary>
+    public async Task<string> RestoreAsync(byte[] zip, string password)
+    {
+        var snapshot = await Task.Run(Backup.SnapshotBeforeRestore);
+        Vault.Lock(); // drops the in-memory vault so nothing saves over the restored file
+        await Task.Run(() => Backup.Extract(zip));
+        SettingsStore.Load();
+        L.Language = SettingsStore.Settings.Language;
+        await Task.Run(() => Vault.Unlock(password));
+        _ = _ui.BeginInvoke(ShowMainWindow);
+        return snapshot;
+    }
+
     public void Exit()
     {
         Dispose();

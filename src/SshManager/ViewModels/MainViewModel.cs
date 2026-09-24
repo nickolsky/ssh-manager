@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
 using SshManager.Core;
+using SshManager.Core.Backup;
 using SshManager.Core.Crypto;
 using SshManager.Core.Inventory;
 using SshManager.Core.Models;
@@ -87,6 +88,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             Status = L.Get("Main.RefreshingAll");
         });
         BackupNowCommand = new RelayCommand(BackupNow);
+        RestoreBackupCommand = new RelayCommand(RestoreBackup);
         SetLanguageCommand = new RelayCommand(p => _host.SetLanguage(p as string is "ru" or "en" ? (string)p : null));
         AboutCommand = new RelayCommand(About);
         ExitCommand = new RelayCommand(() => _host.Exit());
@@ -232,6 +234,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ICommand CollapseAllCommand { get; }
     public ICommand RefreshAllCommand { get; }
     public ICommand BackupNowCommand { get; }
+    public ICommand RestoreBackupCommand { get; }
     public ICommand SetLanguageCommand { get; }
     public ICommand AboutCommand { get; }
     public ICommand ExitCommand { get; }
@@ -734,6 +737,102 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             Warn(L.Get("Backup.Title"), ex.Message);
         }
         Settings.RefreshBackup();
+    }
+
+    private async void RestoreBackup()
+    {
+        var title = L.Get("Restore.Title");
+        var backup = _host.Backup;
+        (string Name, byte[] Data)? source = null;
+
+        // 1. where from: the newest copy in the configured place, or any .zip on disk
+        if (backup.IsConfigured)
+        {
+            var place = backup.Config.Target == BackupTarget.Folder
+                ? backup.Config.Folder!
+                : _host.Vault.Read(d => d.Servers.FirstOrDefault(s => s.Id == backup.Config.ServerId)?.Name) ?? "?";
+            var answer = MessageBox.Show(Owner!, L.F("Restore.ChooseSource", place), title,
+                MessageBoxButton.YesNoCancel, MessageBoxImage.Question, MessageBoxResult.Yes);
+            if (answer == MessageBoxResult.Cancel) return;
+            if (answer == MessageBoxResult.Yes)
+            {
+                Status = L.Get("Restore.Downloading");
+                try
+                {
+                    source = await Task.Run(backup.DownloadLatest);
+                }
+                catch (Exception ex)
+                {
+                    Status = "";
+                    Warn(title, ex.Message);
+                    return;
+                }
+                Status = "";
+                if (source == null)
+                {
+                    Warn(title, L.Get("Restore.NoneFound"));
+                    return;
+                }
+            }
+        }
+        if (source == null)
+        {
+            var ofd = new OpenFileDialog { Title = title, Filter = L.Get("Restore.Filter") };
+            if (backup.Config.Target == BackupTarget.Folder && Directory.Exists(backup.Config.Folder))
+                ofd.InitialDirectory = backup.Config.Folder;
+            if (ofd.ShowDialog(Owner) != true) return;
+            source = (ofd.FileName, File.ReadAllBytes(ofd.FileName));
+        }
+        var (name, zip) = source.Value;
+
+        // 2. it must be our archive and the password must open it; otherwise nothing is touched
+        byte[] vaultFile;
+        try
+        {
+            vaultFile = BackupService.ReadVault(zip);
+        }
+        catch (InvalidDataException ex)
+        {
+            Warn(title, ex.Message);
+            return;
+        }
+        string? password;
+        var prompt = L.F("Restore.PasswordPrompt", name);
+        while (true)
+        {
+            password = InputDialog.Ask(Owner, title, prompt, password: true);
+            if (string.IsNullOrEmpty(password)) return;
+            Status = L.Get("Restore.Checking");
+            try
+            {
+                await Task.Run(() => VaultService.CheckPassword(vaultFile, password));
+                Status = "";
+                break;
+            }
+            catch (WrongPasswordException)
+            {
+                Status = "";
+                prompt = L.Get("Restore.WrongPassword") + "\n\n" + L.F("Restore.PasswordPrompt", name); // ask again right away
+            }
+            catch (Exception ex)
+            {
+                Status = "";
+                Warn(title, ex.Message);
+                return;
+            }
+        }
+        if (!Confirm(L.F("Restore.Confirm", name))) return;
+
+        // 3. replace; this window closes while the vault is relocked and reopens with the restored data
+        try
+        {
+            var snapshot = await _host.RestoreAsync(zip, password);
+            MessageBox.Show(L.F("Restore.Done", name, snapshot), title, MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, title, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private void About()

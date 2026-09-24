@@ -61,6 +61,9 @@ public abstract class TreeNode(int level) : ObservableObject
     public virtual string Cpu => "";
     public virtual double? MemPercent => null;
     public virtual string Mem => "";
+    /// <summary>Usage bar color: ok, warn or bad.</summary>
+    public string CpuLevel => UsageLevel(CpuPercent);
+    public string MemLevel => UsageLevel(MemPercent);
     public virtual string? UsageTip => null;
     /// <summary>Monitored ports shown as small chips in the server row.</summary>
     public virtual IReadOnlyList<PortChip> PortChips => [];
@@ -71,6 +74,8 @@ public abstract class TreeNode(int level) : ObservableObject
     public ServerNode? Server => this as ServerNode ?? Parent?.Server;
 
     protected void RaiseAll() => OnPropertyChanged(string.Empty);
+
+    private static string UsageLevel(double? percent) => percent switch { >= 90 => "bad", >= 70 => "warn", _ => "ok" };
 }
 
 public sealed record PortChip(string Label, string Dot, string? Tip);
@@ -269,8 +274,10 @@ public sealed class ServerNode : TreeNode
         Metrics = metrics;
         OnPropertyChanged(nameof(CpuPercent));
         OnPropertyChanged(nameof(Cpu));
+        OnPropertyChanged(nameof(CpuLevel));
         OnPropertyChanged(nameof(MemPercent));
         OnPropertyChanged(nameof(Mem));
+        OnPropertyChanged(nameof(MemLevel));
         OnPropertyChanged(nameof(UsageTip));
     }
 

@@ -75,6 +75,20 @@ public sealed class VaultService
         LockStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>Throws <see cref="WrongPasswordException"/> unless the password opens this vault file. Slow (Argon2).</summary>
+    public static void CheckPassword(byte[] file, string password)
+    {
+        var key = VaultCrypto.DeriveKey(password, VaultCrypto.ReadParams(file));
+        try
+        {
+            CryptographicOperations.ZeroMemory(VaultCrypto.Decrypt(file, key));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
+
     public void Lock()
     {
         lock (_sync)

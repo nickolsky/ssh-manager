@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text.RegularExpressions;
 using SshManager.Core;
 using SshManager.Core.Backup;
+using SshManager.Core.Crypto;
 using SshManager.Core.Forwarding;
 using SshManager.Core.Inventory;
 using SshManager.Core.Models;
@@ -362,5 +363,62 @@ public class BackupTests
             await backup.RunAsync();
         }
         Assert.Equal(2, Directory.GetFiles(tmp.File("out"), BackupService.FilePrefix + "*.zip").Length);
+    }
+
+    [Fact]
+    public void Restore_Brings_Back_Archived_Data_And_Keeps_A_Snapshot()
+    {
+        using var tmp = new TempDir();
+        var data = Directory.CreateDirectory(tmp.File("data")).FullName;
+        var vault = new VaultService(Path.Combine(data, "vault.dat"));
+        vault.Create("old-password");
+        vault.Update(d => d.Servers.Add(new ServerEntry { Name = "from-backup", Host = "10.0.0.1" }));
+        File.WriteAllText(Path.Combine(data, "known_hosts"), "old\n");
+        var backup = new BackupService(vault, new SettingsService(), new SshClientFactory(vault, new KnownHostsService(tmp.File("kh"))), data);
+        var zip = backup.CreateArchive();
+
+        // the vault moves on: new password, different servers
+        vault.ChangePassword("old-password", "new-password");
+        vault.Update(d => d.Servers.Clear());
+        File.WriteAllText(Path.Combine(data, "known_hosts"), "new\n");
+
+        var archived = BackupService.ReadVault(zip);
+        Assert.Throws<WrongPasswordException>(() => VaultService.CheckPassword(archived, "new-password"));
+        VaultService.CheckPassword(archived, "old-password");
+
+        var snapshot = backup.SnapshotBeforeRestore();
+        Assert.Throws<InvalidOperationException>(() => backup.Extract(zip)); // still unlocked
+        vault.Lock();
+        backup.Extract(zip);
+
+        vault.Unlock("old-password");
+        Assert.Equal("from-backup", Assert.Single(vault.Data.Servers).Name);
+        Assert.Equal("old\n", File.ReadAllText(Path.Combine(data, "known_hosts")));
+        Assert.StartsWith(Path.Combine(data, "backups", BackupService.PreRestorePrefix), snapshot);
+        Assert.Equal("new\n", ReadEntry(File.ReadAllBytes(snapshot), "known_hosts"));
+        Assert.DoesNotContain(ZipEntries(backup.CreateArchive()), n => n.Contains(BackupService.PreRestorePrefix));
+    }
+
+    [Fact]
+    public void ReadVault_Rejects_Foreign_Archives()
+    {
+        using var ms = new MemoryStream();
+        using (var z = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+            using (var w = new StreamWriter(z.CreateEntry("readme.txt").Open())) w.Write("hi");
+        Assert.Throws<InvalidDataException>(() => BackupService.ReadVault(ms.ToArray()));
+        Assert.Throws<InvalidDataException>(() => BackupService.ReadVault([1, 2, 3]));
+    }
+
+    private static string ReadEntry(byte[] zip, string name)
+    {
+        using var z = new ZipArchive(new MemoryStream(zip), ZipArchiveMode.Read);
+        using var r = new StreamReader(z.GetEntry(name)!.Open());
+        return r.ReadToEnd();
+    }
+
+    private static List<string> ZipEntries(byte[] zip)
+    {
+        using var z = new ZipArchive(new MemoryStream(zip), ZipArchiveMode.Read);
+        return z.Entries.Select(e => e.FullName).ToList();
     }
 }

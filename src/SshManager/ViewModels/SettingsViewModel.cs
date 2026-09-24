@@ -295,6 +295,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
 
     public ICommand BrowseBackupFolderCommand { get; }
     public ICommand BackupNowCommand => _main.BackupNowCommand;
+    public ICommand RestoreBackupCommand => _main.RestoreBackupCommand;
 
     public void RefreshBackup() => OnPropertyChanged(nameof(BackupLastResult));
 

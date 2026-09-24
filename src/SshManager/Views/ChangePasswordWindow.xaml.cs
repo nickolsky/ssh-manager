@@ -1,4 +1,5 @@
 using System.Windows;
+using SshManager.Core.Crypto;
 using SshManager.Core.Storage;
 
 namespace SshManager.Views;
@@ -40,6 +41,8 @@ public partial class ChangePasswordWindow : Window
             ShowError(ex.Message);
             OkButton.IsEnabled = true;
             Busy.Visibility = Visibility.Hidden;
+            if (ex is WrongPasswordException) Current.Clear();
+            Current.Focus();
         }
     }
 

@@ -9,6 +9,9 @@ namespace SshManager.Core.Backup;
 public sealed class BackupService(VaultService vault, SettingsService settings, SshClientFactory ssh, string? dataDir = null)
 {
     public const string FilePrefix = "sshmanager-data-";
+    /// <summary>Snapshot of the data folder taken right before a restore (kept in data\backups).</summary>
+    public const string PreRestorePrefix = "before-restore-";
+    private const string VaultEntry = "vault.dat";
     private readonly string _dataDir = dataDir ?? AppPaths.DataDir;
     private readonly SemaphoreSlim _gate = new(1);
 
@@ -72,6 +75,7 @@ public sealed class BackupService(VaultService vault, SettingsService settings, 
         var files = vault.WithFilesLocked(() => Directory
             .EnumerateFiles(root, "*", SearchOption.AllDirectories)
             .Where(f => !f.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+            .Where(f => !Path.GetFileName(f).StartsWith(PreRestorePrefix, StringComparison.OrdinalIgnoreCase))
             .Where(f => exclude == null || !f.StartsWith(exclude, StringComparison.OrdinalIgnoreCase))
             .Select(f => (Name: Path.GetRelativePath(root, f).Replace('\\', '/'), Data: TryRead(f)))
             .Where(f => f.Data != null)
@@ -88,6 +92,102 @@ public sealed class BackupService(VaultService vault, SettingsService settings, 
             }
         }
         return ms.ToArray();
+    }
+
+    // ---------- restore ----------
+
+    /// <summary>The encrypted vault inside a backup archive; throws when the file is not one of our backups.</summary>
+    public static byte[] ReadVault(byte[] zip)
+    {
+        ZipArchive archive;
+        try
+        {
+            archive = new ZipArchive(new MemoryStream(zip), ZipArchiveMode.Read);
+        }
+        catch (InvalidDataException ex)
+        {
+            throw new InvalidDataException(L.Get("Restore.NotBackup"), ex);
+        }
+        using (archive)
+        {
+            var entry = archive.GetEntry(VaultEntry) ?? throw new InvalidDataException(L.Get("Restore.NotBackup"));
+            using var s = entry.Open();
+            using var ms = new MemoryStream();
+            s.CopyTo(ms);
+            return ms.ToArray();
+        }
+    }
+
+    /// <summary>Newest archive in the configured backup folder or on the backup server.</summary>
+    public (string Name, byte[] Data)? DownloadLatest()
+    {
+        var cfg = Config;
+        if (cfg.Target == BackupTarget.Folder)
+        {
+            if (string.IsNullOrWhiteSpace(cfg.Folder) || !Directory.Exists(cfg.Folder)) return null;
+            var file = new DirectoryInfo(cfg.Folder).GetFiles(FilePrefix + "*.zip")
+                .OrderByDescending(f => f.Name, StringComparer.Ordinal).FirstOrDefault();
+            return file == null ? null : (file.FullName, File.ReadAllBytes(file.FullName));
+        }
+
+        var server = vault.Read(d => d.Servers.FirstOrDefault(s => s.Id == cfg.ServerId)?.Clone())
+                     ?? throw new InvalidOperationException(L.Get("Backup.ServerMissing"));
+        using var sftp = ssh.ConnectSftp(server, interactive: true);
+        var dir = RemoteDir(cfg);
+        if (dir != "." && !sftp.Exists(dir)) return null;
+        var latest = sftp.ListDirectory(dir)
+            .Where(f => f.IsRegularFile && f.Name.StartsWith(FilePrefix, StringComparison.Ordinal) && f.Name.EndsWith(".zip"))
+            .OrderByDescending(f => f.Name, StringComparer.Ordinal).FirstOrDefault();
+        if (latest == null) return null;
+        using var ms = new MemoryStream();
+        sftp.DownloadFile(latest.FullName, ms);
+        return ($"{server.Name}:{(dir == "." ? latest.Name : $"{dir}/{latest.Name}")}", ms.ToArray());
+    }
+
+    /// <summary>Zips the current data folder into data\backups (the undo for a restore); returns its path.</summary>
+    public string SnapshotBeforeRestore()
+    {
+        var zip = CreateArchive();
+        Directory.CreateDirectory(SnapshotDir);
+        var path = Path.Combine(SnapshotDir, $"{PreRestorePrefix}{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+        File.WriteAllBytes(path, zip);
+        return path;
+    }
+
+    /// <summary>
+    /// Unpacks a backup over the data folder. Files missing from the archive are left alone.
+    /// The vault must be locked first, so no in-memory copy can overwrite the restored vault.dat.
+    /// </summary>
+    public void Extract(byte[] zip)
+    {
+        if (vault.IsUnlocked) throw new InvalidOperationException("Lock the vault before restoring.");
+        var root = Path.GetFullPath(_dataDir).TrimEnd('\\') + "\\";
+        using var archive = new ZipArchive(new MemoryStream(zip), ZipArchiveMode.Read);
+        vault.WithFilesLocked(() =>
+        {
+            foreach (var entry in archive.Entries)
+            {
+                if (string.IsNullOrEmpty(entry.Name)) continue; // directory entry
+                var target = Path.GetFullPath(Path.Combine(root, entry.FullName));
+                if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue; // "../" in a crafted archive
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                var tmp = target + ".tmp";
+                using (var s = entry.Open())
+                using (var f = File.Create(tmp))
+                    s.CopyTo(f);
+                File.Move(tmp, target, overwrite: true);
+            }
+            return 0;
+        });
+    }
+
+    private string SnapshotDir => Path.Combine(_dataDir, "backups");
+
+    private static string RemoteDir(BackupSettings cfg)
+    {
+        var dir = string.IsNullOrWhiteSpace(cfg.RemotePath) ? "." : cfg.RemotePath.Trim().TrimEnd('/');
+        if (dir.StartsWith("~/", StringComparison.Ordinal)) dir = dir[2..];
+        return dir == "~" ? "." : dir;
     }
 
     private static byte[]? TryRead(string path)
@@ -122,9 +222,7 @@ public sealed class BackupService(VaultService vault, SettingsService settings, 
         var server = vault.Read(d => d.Servers.FirstOrDefault(s => s.Id == cfg.ServerId)?.Clone())
                      ?? throw new InvalidOperationException(L.Get("Backup.ServerMissing"));
         using var sftp = ssh.ConnectSftp(server, interactive);
-        var dir = string.IsNullOrWhiteSpace(cfg.RemotePath) ? "." : cfg.RemotePath.Trim().TrimEnd('/');
-        if (dir.StartsWith("~/", StringComparison.Ordinal)) dir = dir[2..];
-        if (dir == "~") dir = ".";
+        var dir = RemoteDir(cfg);
         EnsureRemoteDir(sftp, dir);
         var remote = dir == "." ? name : $"{dir}/{name}";
         using (var ms = new MemoryStream(zip)) sftp.UploadFile(ms, remote);

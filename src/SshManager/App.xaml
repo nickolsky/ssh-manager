@@ -69,7 +69,7 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SubtleFillColorTertiaryBrush}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ControlStrongFillColorDisabledBrush}" />
                                 <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
@@ -124,6 +124,8 @@
         </Style>
 
         <Style TargetType="c:TreeListView">
+            <!-- explicit: without a Fluent base style the rows fall back to black system text -->
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
@@ -149,6 +151,7 @@
         </Style>
 
         <Style TargetType="c:TreeListViewItem">
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
             <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
@@ -158,6 +161,11 @@
                         <StackPanel>
                             <Border x:Name="Bd" CornerRadius="4" Padding="0,3" Margin="0,1" Background="Transparent">
                                 <Grid>
+                                    <!-- theme-neutral tints: text color for hover, accent for selection -->
+                                    <Rectangle x:Name="HoverFill" RadiusX="4" RadiusY="4" Margin="0,-3"
+                                               Fill="{DynamicResource TextFillColorPrimaryBrush}" Opacity="0" />
+                                    <Rectangle x:Name="SelFill" RadiusX="4" RadiusY="4" Margin="0,-3"
+                                               Fill="{DynamicResource AccentFillColorDefaultBrush}" Opacity="0" />
                                     <Rectangle x:Name="Accent" Width="3" RadiusX="1.5" RadiusY="1.5" Margin="0,4" HorizontalAlignment="Left"
                                                Fill="{DynamicResource AccentFillColorDefaultBrush}" Visibility="Hidden" />
                                     <GridViewRowPresenter Content="{TemplateBinding Header}"
@@ -171,10 +179,10 @@
                                 <Setter TargetName="ItemsHost" Property="Visibility" Value="Visible" />
                             </Trigger>
                             <Trigger SourceName="Bd" Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                                <Setter TargetName="HoverFill" Property="Opacity" Value="0.07" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                                <Setter TargetName="SelFill" Property="Opacity" Value="0.25" />
                                 <Setter TargetName="Accent" Property="Visibility" Value="Visible" />
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -259,14 +267,33 @@
             </Style.Triggers>
         </Style>
 
-        <Style x:Key="UsageBar" TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
-            <Setter Property="Width" Value="36" />
-            <Setter Property="Height" Value="4" />
-            <Setter Property="MinHeight" Value="4" />
+        <!-- usage bar: Tag = ok / warn / bad picks the fill color -->
+        <Style x:Key="UsageBar" TargetType="ProgressBar">
+            <Setter Property="Width" Value="44" />
+            <Setter Property="Height" Value="6" />
             <Setter Property="Minimum" Value="0" />
             <Setter Property="Maximum" Value="100" />
             <Setter Property="Margin" Value="0,0,8,0" />
             <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{DynamicResource SystemFillColorSuccessBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Border x:Name="PART_Track" CornerRadius="3" Background="{DynamicResource ControlStrongFillColorDisabledBrush}">
+                            <Border x:Name="PART_Indicator" CornerRadius="3" HorizontalAlignment="Left" MinWidth="3"
+                                    Background="{TemplateBinding Foreground}" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="warn">
+                    <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCautionBrush}" />
+                </Trigger>
+                <Trigger Property="Tag" Value="bad">
+                    <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
     </Application.Resources>
 </Application>

@@ -49,6 +49,7 @@ public partial class UnlockWindow : Window
         }
 
         SetBusy(true);
+        var retry = false;
         try
         {
             if (_create)
@@ -69,16 +70,19 @@ public partial class UnlockWindow : Window
         {
             ShowError(ex.Message);
             Password.Clear();
-            Password.Focus();
+            retry = true;
         }
         catch (Exception ex)
         {
             ShowError(ex.Message);
+            retry = true;
         }
         finally
         {
             SetBusy(false);
         }
+        // only after SetBusy(false): a disabled PasswordBox refuses focus
+        if (retry) Password.Focus();
     }
 
     private void SetBusy(bool busy)
