@@ -49,7 +49,7 @@ public sealed partial class AppHost : IDisposable
         Metrics = new MetricsCollector(Ssh);
         Forwards = new PortForwardService(Vault, Ssh);
         Backup = new BackupService(Vault, SettingsStore, Ssh);
-        Scripts = new ScriptRunner(Ssh, Launcher);
+        Scripts = new ScriptRunner(Ssh);
         Control = new ControlServer(HandleControlAsync);
 
         Health.WentDown += (_, t) => _ui.BeginInvoke(() => OnServerDown(t));
@@ -109,7 +109,7 @@ public sealed partial class AppHost : IDisposable
 
         if (startInTray)
         {
-            _tray.Balloon("SSH Manager", L.Get("Tray.StartedLocked"));
+            _tray.Balloon(AppPaths.ProductTitle, L.Get("Tray.StartedLocked"));
             return;
         }
         ShowMainWindow();
@@ -256,9 +256,37 @@ public sealed partial class AppHost : IDisposable
     /// <summary>Starts an ssh session; after the first one, learns the OS in the background.</summary>
     public void Launch(ServerEntry server)
     {
-        Launcher.Launch(server);
+        OpenSession(server);
         AfterSessionStarted(server);
     }
+
+    /// <summary>
+    /// Opens a shell (or runs <paramref name="command"/>): in a tab of the main window with the built-in terminal,
+    /// otherwise in Windows Terminal / a console. Jump hosts and extra ssh arguments need ssh.exe, so they always go outside.
+    /// </summary>
+    public void OpenSession(ServerEntry server, string? command = null, string? title = null)
+    {
+        if (!UseBuiltInTerminal(server))
+        {
+            Launcher.Launch(server, command, title);
+            return;
+        }
+        ShowMainWindow();
+        if (_main == null) return; // unlock cancelled
+        _main.OpenTerminal(server, command, title);
+        Vault.Update(d =>
+        {
+            var s = d.Servers.FirstOrDefault(x => x.Id == server.Id);
+            if (s != null) s.LastConnected = DateTime.Now;
+        });
+    }
+
+    public bool UseBuiltInTerminal(ServerEntry server) =>
+        SettingsStore.Settings.Terminal == TerminalMode.BuiltIn &&
+        string.IsNullOrWhiteSpace(server.JumpHost) && string.IsNullOrWhiteSpace(server.ExtraArgs);
+
+    public TerminalSession CreateTerminalSession(ServerEntry server) =>
+        new(Ssh, server, SettingsStore.Settings.ServerAliveInterval);
 
     private void AfterSessionStarted(ServerEntry server)
     {
@@ -324,7 +352,8 @@ public sealed partial class AppHost : IDisposable
 
     private async void RunAutoBackup()
     {
-        if (!Vault.IsUnlocked || !Backup.AutoDue) return;
+        // a test instance works on a copy of the data; its backups would rotate the real ones away
+        if (AppPaths.IsSideBySide || !Vault.IsUnlocked || !Backup.AutoDue) return;
         try
         {
             await Backup.RunAsync(interactive: false);
@@ -359,6 +388,7 @@ public sealed partial class AppHost : IDisposable
 
     public void TryApplyAutostart(bool enabled)
     {
+        if (AppPaths.IsSideBySide) return; // the Run entry belongs to the main copy
         try
         {
             Autostart.Apply(enabled);

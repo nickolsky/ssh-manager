@@ -863,7 +863,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (SelectedNode is not { Server: { } server } node || build(node) is not { } command) return;
         try
         {
-            _host.Scripts.Launch(server.Entry, command, $"{title} {node.Title}");
+            _host.OpenSession(server.Entry, command, $"{title} {node.Title}");
         }
         catch (Exception ex)
         {

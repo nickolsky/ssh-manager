@@ -4,5 +4,7 @@ obj/
 *.user
 # Personal encrypted vault, settings and known_hosts - never commit
 data/
-# Published build
+# Published build and the side-by-side test build (publish-dev.ps1) with its copy of the data
 app/
+app-dev/
+data-*/

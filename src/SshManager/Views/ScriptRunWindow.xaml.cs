@@ -217,7 +217,7 @@ public partial class ScriptRunWindow : Window
         try
         {
             var command = await Task.Run(() => _host.Scripts.Prepare(server, _script, values));
-            _host.Scripts.Launch(server, command, _script.Name);
+            _host.OpenSession(server, command, _script.Name);
             SetStatus(L.Get("ScriptRun.InTerminalStarted"));
         }
         catch (Exception ex)

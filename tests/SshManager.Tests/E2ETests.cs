@@ -81,7 +81,7 @@ public class E2ETests
         client.RunCommand("rm -rf sshm-e2e-backups");
 
         // install script: uploaded to /tmp, run with the env vars, removed afterwards
-        var runner = new Core.Scripts.ScriptRunner(ssh, null!);
+        var runner = new Core.Scripts.ScriptRunner(ssh);
         var command = runner.Prepare(server, new ScriptEntry { Name = "t", Body = "echo \"HELLO $SSHM_SERVER_NAME\"; echo $0" });
         var run = client.RunCommand(command);
         Assert.Contains("HELLO e2e", run.Result);
@@ -103,7 +103,7 @@ public class E2ETests
         var root = new ServerEntry { Name = "e2e", Host = t.Host, Port = t.Port, Username = t.User, Password = t.Password };
         vault.Update(d => d.Servers.Add(root));
         var ssh = new SshClientFactory(vault, new KnownHostsService(tmp.File("known_hosts"))) { ConfirmHostKey = _ => true };
-        var runner = new Core.Scripts.ScriptRunner(ssh, null!);
+        var runner = new Core.Scripts.ScriptRunner(ssh);
         var script = new ScriptEntry
         {
             Name = "demo",

@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>terminal</title>
+<link rel="stylesheet" href="vendor/xterm.css">
+<style>
+  :root { --bg: #1f1f1f; --fg: #e6e6e6; --muted: #9a9a9a; }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+  #term { position: absolute; inset: 6px 4px 4px 10px; }
+  .xterm .xterm-viewport { scrollbar-width: thin; }
+  #banner {
+    position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
+    font: 14px "Segoe UI", sans-serif; color: var(--muted); text-align: center; pointer-events: none;
+    display: none; white-space: pre-line;
+  }
+</style>
+</head>
+<body>
+<div id="term"></div>
+<div id="banner"></div>
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script src="vendor/addon-web-links.js"></script>
+<script src="vendor/addon-unicode11.js"></script>
+<script src="terminal.js"></script>
+</body>
+</html>

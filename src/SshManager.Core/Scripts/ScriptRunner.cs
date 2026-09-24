@@ -15,7 +15,7 @@ public sealed record ScriptRunResult(int ExitCode, Dictionary<string, string> Re
 /// and removed when it ends. Two ways to run:
 /// in the app (output streamed back, results collected from $SSHM_RESULT) or in a terminal tab (interactive).
 /// </summary>
-public sealed partial class ScriptRunner(SshClientFactory ssh, SessionLauncher launcher)
+public sealed partial class ScriptRunner(SshClientFactory ssh)
 {
     /// <summary>Printed after the script's own output; what follows is the content of $SSHM_RESULT.</summary>
     internal const string ResultMarker = "@@sshm:result:7f3c";
@@ -151,9 +151,6 @@ public sealed partial class ScriptRunner(SshClientFactory ssh, SessionLauncher l
         var showResults = $"if [ -s {RemoteShell.Quote(f.Result)} ]; then echo; echo '== results =='; cat {RemoteShell.Quote(f.Result)}; fi";
         return $"trap {RemoteShell.Quote(rm)} EXIT; {elevate}sh -c {RemoteShell.Quote(inner)}; rc=$?; {showResults}; echo; echo \"[exit $rc]\"; exit $rc";
     }
-
-    public void Launch(ServerEntry server, string remoteCommand, string title) =>
-        launcher.Launch(server, remoteCommand, title);
 
     // ---------- shared ----------
 

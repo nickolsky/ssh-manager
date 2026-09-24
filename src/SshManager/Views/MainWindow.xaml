@@ -742,6 +742,7 @@
                                 <ComboBoxItem Content="{l:Tr Settings.WtTab}" />
                                 <ComboBoxItem Content="{l:Tr Settings.WtWindow}" />
                                 <ComboBoxItem Content="{l:Tr Settings.Console}" />
+                                <ComboBoxItem Content="{l:Tr Settings.BuiltIn}" />
                             </ComboBox>
                             <TextBlock Style="{StaticResource Hint}" Text="{Binding TerminalInfo}" Margin="0,4,0,0" />
                             <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Settings.WtProfile}" />

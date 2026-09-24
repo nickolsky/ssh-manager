@@ -17,7 +17,7 @@ public partial class App : Application
         base.OnStartup(e);
         var tray = e.Args.Contains("--tray", StringComparer.OrdinalIgnoreCase);
 
-        _singleInstance = new Mutex(true, @"Local\SshManager-" + Environment.UserName, out var isFirst);
+        _singleInstance = new Mutex(true, AppPaths.SingleInstanceLock, out var isFirst);
         if (!isFirst)
         {
             // Already running: bring it to front (unless this is just the autostart entry).

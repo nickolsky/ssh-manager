@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Windows.Forms;
+using SshManager.Core;
 using SshManager.Core.Models;
 
 namespace SshManager.Services;
@@ -15,7 +16,7 @@ internal sealed class TrayIcon : IDisposable
     public TrayIcon(AppHost host)
     {
         _host = host;
-        _icon = new NotifyIcon { Text = "SSH Manager", ContextMenuStrip = _menu, Visible = true };
+        _icon = new NotifyIcon { Text = AppPaths.ProductTitle, ContextMenuStrip = _menu, Visible = true };
         _icon.DoubleClick += (_, _) => _host.ShowMainWindow();
         _icon.BalloonTipClicked += (_, _) => _host.ShowMainWindow();
         _icon.MouseClick += (_, e) =>
@@ -35,7 +36,7 @@ internal sealed class TrayIcon : IDisposable
         _icon.Icon = _current;
         old?.Dispose();
         var agent = _host.Agent.PipeName ?? L.Get("Tray.AgentNotRunning");
-        var text = $"SSH Manager — {L.Get(unlocked ? "Tray.Unlocked" : "Tray.Locked")}\n{L.Get("Tray.Agent")} {agent}";
+        var text = $"{AppPaths.ProductTitle} — {L.Get(unlocked ? "Tray.Unlocked" : "Tray.Locked")}\n{L.Get("Tray.Agent")} {agent}";
         _icon.Text = text.Length > 127 ? text[..127] : text;
     }
 

@@ -5,6 +5,8 @@ public enum TerminalMode
     WindowsTerminalTab,
     WindowsTerminalWindow,
     ConsoleWindow,
+    /// <summary>A tab inside the SSH Manager window (xterm.js + SSH.NET).</summary>
+    BuiltIn,
 }
 
 public enum BackupTarget
