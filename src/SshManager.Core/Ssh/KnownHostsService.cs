@@ -37,6 +37,13 @@ public sealed class KnownHostsService(string? file = null)
         return status;
     }
 
+    /// <summary>Any key stored for this host (background jobs only run against confirmed hosts).</summary>
+    public bool IsKnown(string host, int port)
+    {
+        var pattern = HostPattern(host, port);
+        return Entries().Any(e => e.Hosts.Split(',').Contains(pattern, StringComparer.OrdinalIgnoreCase));
+    }
+
     public void Add(string host, int port, byte[] blob)
     {
         var line = $"{HostPattern(host, port)} {KeyType(blob)} {Convert.ToBase64String(blob)}";

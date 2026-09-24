@@ -1,7 +1,8 @@
 <Window x:Class="SshManager.Views.ServerEditorWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Сервер" Width="560" SizeToContent="Height" ResizeMode="NoResize"
+        xmlns:l="clr-namespace:SshManager.Localization"
+        Title="{l:Tr Editor.Title}" Width="560" SizeToContent="Height" ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
     <StackPanel Margin="24,16,24,20">
         <Grid>
@@ -11,12 +12,12 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Style="{StaticResource FieldLabel}" Text="Название" />
+                <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Editor.Name}" />
                 <TextBox x:Name="NameBox" />
             </StackPanel>
             <StackPanel Grid.Column="2">
-                <TextBlock Style="{StaticResource FieldLabel}" Text="Группа" />
-                <ComboBox x:Name="GroupBox" IsEditable="True" />
+                <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Editor.Group}" />
+                <ComboBox x:Name="GroupBox" IsEditable="True" ToolTip="{l:Tr Editor.GroupTip}" />
             </StackPanel>
         </Grid>
 
@@ -29,27 +30,27 @@
                 <ColumnDefinition Width="140" />
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Style="{StaticResource FieldLabel}" Text="IP-адрес или хост" />
+                <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Editor.Host}" />
                 <TextBox x:Name="HostBox" />
             </StackPanel>
             <StackPanel Grid.Column="2">
-                <TextBlock Style="{StaticResource FieldLabel}" Text="Порт" />
+                <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Editor.Port}" />
                 <TextBox x:Name="PortBox" Text="22" />
             </StackPanel>
             <StackPanel Grid.Column="4">
-                <TextBlock Style="{StaticResource FieldLabel}" Text="Пользователь" />
+                <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Editor.User}" />
                 <TextBox x:Name="UserBox" Text="root" />
             </StackPanel>
         </Grid>
 
-        <TextBlock Style="{StaticResource FieldLabel}" Text="Авторизация" />
+        <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Editor.Auth}" />
         <StackPanel Orientation="Horizontal">
-            <RadioButton x:Name="AuthPassword" Content="Пароль" GroupName="auth" Checked="OnAuthChanged" Margin="0,0,24,0" />
-            <RadioButton x:Name="AuthKey" Content="SSH-ключ" GroupName="auth" Checked="OnAuthChanged" />
+            <RadioButton x:Name="AuthPassword" Content="{l:Tr Auth.Password}" GroupName="auth" Checked="OnAuthChanged" Margin="0,0,24,0" />
+            <RadioButton x:Name="AuthKey" Content="{l:Tr Editor.SshKey}" GroupName="auth" Checked="OnAuthChanged" />
         </StackPanel>
 
         <StackPanel x:Name="PasswordPanel">
-            <TextBlock Style="{StaticResource FieldLabel}" Text="Пароль" />
+            <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Auth.Password}" />
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -57,32 +58,34 @@
                 </Grid.ColumnDefinitions>
                 <PasswordBox x:Name="PasswordBox" />
                 <TextBox x:Name="PasswordPlain" Visibility="Collapsed" />
-                <ToggleButton x:Name="ShowPassword" Grid.Column="1" Content="Показать" Margin="6,0,0,0"
+                <ToggleButton x:Name="ShowPassword" Grid.Column="1" Content="{l:Tr Editor.Show}" Margin="6,0,0,0"
                               Checked="OnShowPassword" Unchecked="OnShowPassword" />
             </Grid>
         </StackPanel>
 
         <StackPanel x:Name="KeyPanel">
-            <TextBlock Style="{StaticResource FieldLabel}" Text="Ключ" />
+            <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Editor.Key}" />
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <ComboBox x:Name="KeyBox" DisplayMemberPath="Name" />
-                <Button Grid.Column="1" Content="Новый ключ…" Margin="6,0,0,0" Click="OnNewKey" />
+                <Button Grid.Column="1" Content="{l:Tr Editor.NewKey}" Margin="6,0,0,0" Click="OnNewKey" />
             </Grid>
-            <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,0"
-                       Text="Пароль можно оставить сохранённым — он нужен кнопке «Настроить вход по ключу»." />
+            <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,0" Text="{l:Tr Editor.KeyHint}" />
         </StackPanel>
 
-        <Expander Header="Дополнительно" Margin="0,14,0,0">
+        <Expander Header="{l:Tr Editor.Advanced}" Margin="0,14,0,0">
             <StackPanel>
-                <TextBlock Style="{StaticResource FieldLabel}" Text="Jump-хост (ssh -J), например user@bastion:22" />
+                <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Editor.Jump}" />
                 <TextBox x:Name="JumpBox" />
-                <TextBlock Style="{StaticResource FieldLabel}" Text="Дополнительные аргументы ssh" />
+                <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Editor.ExtraArgs}" />
                 <TextBox x:Name="ExtraBox" />
-                <TextBlock Style="{StaticResource FieldLabel}" Text="Заметки" />
+                <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Editor.Monitor}" />
+                <TextBox x:Name="MonitorBox" Width="90" HorizontalAlignment="Left" />
+                <TextBlock x:Name="MonitorHint" Style="{StaticResource Hint}" Margin="0,4,0,0" />
+                <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Editor.Notes}" />
                 <TextBox x:Name="NotesBox" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="60" MaxHeight="140"
                          VerticalScrollBarVisibility="Auto" />
             </StackPanel>
@@ -91,8 +94,8 @@
         <TextBlock x:Name="Error" Foreground="#E0443E" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed" />
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
-            <Button Content="Сохранить" IsDefault="True" Click="OnSave" Style="{DynamicResource AccentButtonStyle}" MinWidth="110" />
-            <Button Content="Отмена" IsCancel="True" Style="{StaticResource DialogButton}" />
+            <Button Content="{l:Tr Common.Save}" IsDefault="True" Click="OnSave" Style="{DynamicResource AccentButtonStyle}" MinWidth="110" />
+            <Button Content="{l:Tr Common.Cancel}" IsCancel="True" Style="{StaticResource DialogButton}" />
         </StackPanel>
     </StackPanel>
 </Window>

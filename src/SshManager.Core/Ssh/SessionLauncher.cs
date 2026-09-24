@@ -58,7 +58,8 @@ public sealed class SessionLauncher(VaultService vault, SettingsService settings
         return null;
     }
 
-    public LaunchSpec BuildSpec(ServerEntry server, bool pauseOnError)
+    /// <param name="remoteCommand">Command to run instead of a login shell (gets a TTY via -t).</param>
+    public LaunchSpec BuildSpec(ServerEntry server, bool pauseOnError, string? remoteCommand = null, string? title = null)
     {
         var s = settings.Settings;
         var args = new List<string>
@@ -75,13 +76,13 @@ public sealed class SessionLauncher(VaultService vault, SettingsService settings
         if (server.Auth == AuthMode.Key)
         {
             var key = server.KeyId is { } id ? vault.Data.Keys.FirstOrDefault(k => k.Id == id) : null;
-            if (key == null) throw new InvalidOperationException($"У сервера «{server.Name}» не выбран ключ");
+            if (key == null) throw new InvalidOperationException(L.F("Launch.NoKey", server.Name));
             args.AddRange(["-o", "IdentitiesOnly=yes", "-i", AppPaths.ForSsh(KeyService.EnsurePublicKeyFile(key))]);
         }
         else
         {
             if (string.IsNullOrEmpty(server.Password))
-                throw new InvalidOperationException($"У сервера «{server.Name}» не сохранён пароль");
+                throw new InvalidOperationException(L.F("Launch.NoPassword", server.Name));
             var token = NewToken();
             _askPass[token] = new AskPassTicket { ServerId = server.Id, Expires = DateTime.UtcNow + AskPassTtl };
             env["SSH_ASKPASS"] = AppPaths.HelperExe;
@@ -95,24 +96,28 @@ public sealed class SessionLauncher(VaultService vault, SettingsService settings
         }
 
         args.AddRange(SplitArgs(server.ExtraArgs));
+        if (remoteCommand != null) args.Add("-t");
         args.AddRange(["-l", server.Username, server.Host]);
+        if (remoteCommand != null) args.Add(remoteCommand);
 
+        var name = string.IsNullOrWhiteSpace(server.Name) ? server.Host : server.Name;
         return new LaunchSpec
         {
             SshPath = SshPath,
             Args = args,
             Env = env,
-            Title = string.IsNullOrWhiteSpace(server.Name) ? server.Host : server.Name,
+            Title = title == null ? name : $"{name}: {title}",
             PauseOnError = pauseOnError,
+            PauseAlways = remoteCommand != null,
         };
     }
 
-    /// <summary>Opens a session in a new terminal tab/window.</summary>
-    public void Launch(ServerEntry server)
+    /// <summary>Opens a session (or runs <paramref name="remoteCommand"/>) in a new terminal tab/window.</summary>
+    public void Launch(ServerEntry server, string? remoteCommand = null, string? title = null)
     {
         var mode = settings.Settings.Terminal;
         var wt = mode == TerminalMode.ConsoleWindow ? null : FindWindowsTerminal();
-        var spec = BuildSpec(server, pauseOnError: wt == null);
+        var spec = BuildSpec(server, pauseOnError: wt == null, remoteCommand, title);
         var token = NewToken();
         _launches[token] = (spec, DateTime.UtcNow + LaunchTtl);
         Cleanup();

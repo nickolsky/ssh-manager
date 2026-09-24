@@ -1,6 +1,7 @@
 <Window x:Class="SshManager.Views.InputDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:SshManager.Localization"
         Title="SSH Manager" Width="420" SizeToContent="Height" ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
     <StackPanel Margin="24,16,24,20">
@@ -9,7 +10,7 @@
         <PasswordBox x:Name="PasswordInput" Visibility="Collapsed" />
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
             <Button Content="OK" IsDefault="True" Click="OnOk" Style="{DynamicResource AccentButtonStyle}" MinWidth="100" />
-            <Button Content="Отмена" IsCancel="True" Style="{StaticResource DialogButton}" />
+            <Button Content="{l:Tr Common.Cancel}" IsCancel="True" Style="{StaticResource DialogButton}" />
         </StackPanel>
     </StackPanel>
 </Window>

@@ -29,6 +29,63 @@ public class E2ETests
         return (p[0], int.Parse(p[1]), p[2], p[3]);
     }
 
+    /// <summary>Inventory, metrics, iptables forwards and SFTP backup. The target must allow iptables (root, NET_ADMIN).</summary>
+    [Fact]
+    public async Task Inventory_Metrics_Forwards_And_Backup()
+    {
+        if (Target() is not { } t) return;
+        using var tmp = new TempDir();
+        var vault = new VaultService(tmp.File("vault.dat"));
+        vault.Create("password123");
+        var server = new ServerEntry { Name = "e2e", Host = t.Host, Port = t.Port, Username = t.User, Password = t.Password };
+        vault.Update(d => d.Servers.Add(server));
+        var known = new KnownHostsService(tmp.File("known_hosts"));
+        var ssh = new SshClientFactory(vault, known) { ConfirmHostKey = _ => true };
+        using (ssh.Connect(server)) { } // trust the host key once, background jobs never prompt
+
+        await new Core.Inventory.ServerInventoryService(vault, ssh).RefreshAsync(server.Id);
+        var facts = vault.Data.Servers.Single().Facts!;
+        Assert.Null(facts.InventoryError);
+        Assert.NotNull(facts.OsId);
+        Assert.NotNull(facts.Kernel);
+
+        var metrics = new Core.Monitoring.MetricsCollector(ssh);
+        await metrics.CollectAsync(server);
+        var m = metrics.Get(server.Id)!;
+        Assert.Null(m.Error);
+        Assert.NotNull(m.CpuPercent);
+        Assert.True(m.MemTotalKb > 0);
+
+        var health = await Core.Monitoring.HealthMonitor.ProbeAsync(t.Host, t.Port, TimeSpan.FromSeconds(5));
+        Assert.Equal(Core.Monitoring.HealthState.Online, health.State);
+        Assert.Null(health.Error);
+
+        var fwd = new Core.Forwarding.PortForwardService(vault, ssh);
+        var logs = new List<string>();
+        var added = fwd.Add(server, "tcp", "18443", "203.0.113.9", "443", logs.Add);
+        var f = Assert.Single(added.Forwards, x => x.ListenPort == "18443");
+        Assert.True(f.Managed);
+        Assert.Equal("203.0.113.9", f.TargetIp);
+        var removed = fwd.Remove(server, f, logs.Add);
+        Assert.DoesNotContain(removed.Forwards, x => x.ListenPort == "18443");
+
+        var settings = new SettingsService();
+        settings.Settings.Backup = new BackupSettings { Target = BackupTarget.Ssh, ServerId = server.Id, RemotePath = "sshm-e2e-backups", Keep = 1 };
+        var where = await new Core.Backup.BackupService(vault, settings, ssh, tmp.Path).RunAsync(interactive: false);
+        Assert.Contains("sshm-e2e-backups/sshmanager-data-", where);
+        using var client = ssh.Connect(server);
+        Assert.Contains("sshmanager-data-", client.RunCommand("ls sshm-e2e-backups").Result);
+        client.RunCommand("rm -rf sshm-e2e-backups");
+
+        // install script: uploaded to /tmp, run with the env vars, removed afterwards
+        var runner = new Core.Scripts.ScriptRunner(ssh, null!);
+        var command = runner.Prepare(server, new ScriptEntry { Name = "t", Body = "echo \"HELLO $SSHM_SERVER_NAME\"; echo $0" });
+        var run = client.RunCommand(command);
+        Assert.Contains("HELLO e2e", run.Result);
+        var file = run.Result.Split('\n').Select(l => l.Trim()).First(l => l.StartsWith("/tmp/sshm-"));
+        Assert.Contains("gone", client.RunCommand($"test -e {file} || echo gone").Result);
+    }
+
     [Fact]
     public async Task Password_Then_KeySetup_Then_Agent_And_AskPass_Sessions()
     {
@@ -41,7 +98,8 @@ public class E2ETests
 
         var known = new KnownHostsService(tmp.File("known_hosts"));
         var prompts = 0;
-        var setup = new KeySetupService(vault, known) { ConfirmHostKey = _ => { prompts++; return true; } };
+        var ssh = new SshClientFactory(vault, known) { ConfirmHostKey = _ => { prompts++; return true; } };
+        var setup = new KeySetupService(vault, ssh);
 
         // 1. password login via SSH.NET, host key gets stored
         Assert.Contains("Linux", setup.Test(server));

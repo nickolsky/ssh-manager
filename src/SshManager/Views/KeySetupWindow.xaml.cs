@@ -19,8 +19,8 @@ public partial class KeySetupWindow : Window
         _host = host;
         _server = server;
         Header.Text = $"{server.Name}  ({server.Display})";
-        var choices = new List<KeyChoice> { new(null, "Сгенерировать новый ключ Ed25519") };
-        choices.AddRange(host.Vault.Data.Keys.OrderBy(k => k.Name).Select(k => new KeyChoice(k.Id, "Существующий: " + k.Name)));
+        var choices = new List<KeyChoice> { new(null, L.Get("KeySetup.GenerateNew")) };
+        choices.AddRange(host.Vault.Data.Keys.OrderBy(k => k.Name).Select(k => new KeyChoice(k.Id, L.Get("KeySetup.Existing") + " " + k.Name)));
         KeyBox.ItemsSource = choices;
         KeyBox.SelectedIndex = 0;
         Closing += OnClosing;
@@ -50,12 +50,12 @@ public partial class KeySetupWindow : Window
         {
             var server = _server;
             var key = await Task.Run(() => _host.KeySetup.SetupKeyAuth(server, keyId, Append));
-            Append($"Готово. Ключ: {key.Name} ({key.Fingerprint})");
-            StartButton.Content = "Готово";
+            Append(L.F("KeySetup.Done", key.Name, key.Fingerprint));
+            StartButton.Content = L.Get("KeySetup.DoneButton");
         }
         catch (Exception ex)
         {
-            Append("ОШИБКА: " + ex.Message);
+            Append(L.Get("Common.Error") + " " + ex.Message);
             StartButton.IsEnabled = true;
             KeyBox.IsEnabled = true;
         }

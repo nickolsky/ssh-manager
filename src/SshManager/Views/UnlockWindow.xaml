@@ -1,32 +1,30 @@
 <Window x:Class="SshManager.Views.UnlockWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:SshManager.Localization"
         Title="SSH Manager" Width="440" SizeToContent="Height"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize" Topmost="True" ShowInTaskbar="True">
     <StackPanel Margin="24">
-        <TextBlock x:Name="Header" FontSize="20" FontWeight="SemiBold" Text="Разблокировать хранилище" />
-        <TextBlock x:Name="Subtitle" Style="{StaticResource Hint}" Margin="0,6,0,0"
-                   Text="Введите мастер-пароль, чтобы открыть серверы и ключи." />
+        <TextBlock x:Name="Header" FontSize="20" FontWeight="SemiBold" Text="{l:Tr Unlock.Header}" />
+        <TextBlock x:Name="Subtitle" Style="{StaticResource Hint}" Margin="0,6,0,0" Text="{l:Tr Unlock.Subtitle}" />
 
-        <TextBlock Style="{StaticResource FieldLabel}" Text="Мастер-пароль" />
+        <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Unlock.Password}" />
         <PasswordBox x:Name="Password" />
 
         <StackPanel x:Name="CreatePanel" Visibility="Collapsed">
-            <TextBlock Style="{StaticResource FieldLabel}" Text="Повторите пароль" />
+            <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Unlock.Repeat}" />
             <PasswordBox x:Name="Confirm" />
-            <CheckBox x:Name="AutostartBox" Margin="0,14,0,0" IsChecked="True"
-                      Content="Запускать вместе с Windows (в трее)" />
-            <TextBlock Style="{StaticResource Hint}" Margin="0,10,0,0"
-                       Text="Хранилище шифруется AES-256-GCM, ключ получается из пароля через Argon2id. Забытый мастер-пароль восстановить невозможно." />
+            <CheckBox x:Name="AutostartBox" Margin="0,14,0,0" IsChecked="True" Content="{l:Tr Unlock.Autostart}" />
+            <TextBlock Style="{StaticResource Hint}" Margin="0,10,0,0" Text="{l:Tr Unlock.CryptoHint}" />
         </StackPanel>
 
         <TextBlock x:Name="Error" Foreground="#E0443E" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed" />
         <ProgressBar x:Name="Busy" IsIndeterminate="True" Height="4" Margin="0,12,0,0" Visibility="Hidden" />
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
-            <Button x:Name="OkButton" Content="Разблокировать" IsDefault="True" Click="OnOk"
+            <Button x:Name="OkButton" Content="{l:Tr Unlock.Unlock}" IsDefault="True" Click="OnOk"
                     Style="{DynamicResource AccentButtonStyle}" MinWidth="130" />
-            <Button Content="Отмена" IsCancel="True" Style="{StaticResource DialogButton}" />
+            <Button Content="{l:Tr Common.Cancel}" IsCancel="True" Style="{StaticResource DialogButton}" />
         </StackPanel>
     </StackPanel>
 </Window>

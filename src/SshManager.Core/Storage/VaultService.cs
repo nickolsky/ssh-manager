@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using SshManager.Core.Crypto;
+using SshManager.Core.Localization;
 using SshManager.Core.Models;
 
 namespace SshManager.Core.Storage;
@@ -26,6 +27,8 @@ public sealed class VaultService
 
     public event EventHandler? LockStateChanged;
     public event EventHandler? DataChanged;
+    /// <summary>Only <see cref="ServerEntry.Facts"/> of this server changed (no full reload needed).</summary>
+    public event EventHandler<Guid>? FactsChanged;
 
     public bool Exists => File.Exists(_file);
     public bool IsUnlocked => _data != null;
@@ -34,7 +37,7 @@ public sealed class VaultService
 
     public void Create(string password)
     {
-        if (Exists) throw new InvalidOperationException("Хранилище уже существует");
+        if (Exists) throw new InvalidOperationException(L.Get("Vault.Exists"));
         var kdf = VaultCrypto.KdfParams.CreateDefault();
         var key = VaultCrypto.DeriveKey(password, kdf);
         lock (_sync)
@@ -100,14 +103,37 @@ public sealed class VaultService
     }
 
     /// <summary>Runs a mutation under the vault lock and saves.</summary>
-    public void Update(Action<VaultData> change)
+    public void Update(Action<VaultData> change) => Update(change, backup: true);
+
+    /// <param name="backup">false for bookkeeping writes that should not push user versions out of backups\.</param>
+    public void Update(Action<VaultData> change, bool backup)
     {
         lock (_sync)
         {
             change(Data);
-            SaveLocked(backup: true);
+            SaveLocked(backup);
         }
         DataChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Updates collected facts of a server (no backup copy). Returns false if locked or the server is gone.</summary>
+    public bool UpdateFacts(Guid serverId, Action<ServerFacts> change)
+    {
+        lock (_sync)
+        {
+            var server = _data?.Servers.FirstOrDefault(s => s.Id == serverId);
+            if (server == null) return false;
+            change(server.Facts ??= new ServerFacts());
+            SaveLocked(backup: false);
+        }
+        FactsChanged?.Invoke(this, serverId);
+        return true;
+    }
+
+    /// <summary>Runs an action while no save can happen (consistent file copies for backups).</summary>
+    public T WithFilesLocked<T>(Func<T> action)
+    {
+        lock (_sync) return action();
     }
 
     /// <summary>Thread-safe read access for background threads (agent, IPC).</summary>
@@ -170,4 +196,4 @@ public sealed class VaultService
     }
 }
 
-public sealed class VaultLockedException() : Exception("Хранилище заблокировано");
+public sealed class VaultLockedException() : Exception(L.Get("Vault.Locked"));

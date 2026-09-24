@@ -4,7 +4,14 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using SshManager.Core;
 using SshManager.Core.Agent;
+using SshManager.Core.Backup;
+using SshManager.Core.Forwarding;
+using SshManager.Core.Geo;
+using SshManager.Core.Inventory;
+using SshManager.Core.Models;
+using SshManager.Core.Monitoring;
 using SshManager.Core.Pipes;
+using SshManager.Core.Scripts;
 using SshManager.Core.Ssh;
 using SshManager.Core.Storage;
 using SshManager.Views;
@@ -15,9 +22,12 @@ namespace SshManager.Services;
 public sealed partial class AppHost : IDisposable
 {
     private static readonly TimeSpan AgentPromptCooldown = TimeSpan.FromSeconds(30);
+    /// <summary>Time for the user to accept the host key in the terminal before we log in in the background.</summary>
+    private static readonly TimeSpan FirstInventoryDelay = TimeSpan.FromSeconds(45);
 
     private readonly Dispatcher _ui;
     private readonly DispatcherTimer _idleTimer;
+    private readonly DispatcherTimer _backupTimer;
     private TrayIcon? _tray;
     private MainWindow? _main;
     private Task<bool>? _unlockTask;
@@ -27,15 +37,32 @@ public sealed partial class AppHost : IDisposable
     {
         _ui = ui;
         SettingsStore.Load();
+        L.Language = SettingsStore.Settings.Language;
         Agent = new SshAgentServer(Vault) { UnlockRequested = () => EnsureUnlockedAsync(fromAgent: true) };
         KnownHosts = new KnownHostsService();
         Launcher = new SessionLauncher(Vault, SettingsStore, Agent, KnownHosts);
-        KeySetup = new KeySetupService(Vault, KnownHosts) { ConfirmHostKey = ConfirmHostKey };
+        Ssh = new SshClientFactory(Vault, KnownHosts) { ConfirmHostKey = ConfirmHostKey };
+        KeySetup = new KeySetupService(Vault, Ssh);
+        Inventory = new ServerInventoryService(Vault, Ssh);
+        Geo = new GeoIpService(Vault, SettingsStore);
+        Health = new HealthMonitor(Vault, SettingsStore);
+        Metrics = new MetricsCollector(Ssh);
+        Forwards = new PortForwardService(Vault, Ssh);
+        Backup = new BackupService(Vault, SettingsStore, Ssh);
+        Scripts = new ScriptRunner(Ssh, Launcher);
         Control = new ControlServer(HandleControlAsync);
+
+        Health.WentDown += (_, t) => _ui.BeginInvoke(() => OnServerDown(t));
+        Health.ServerOnline += (_, s) =>
+        {
+            if (SettingsStore.Settings.CollectMetrics && KnownHosts.IsKnown(s.Host, s.Port)) _ = Metrics.CollectAsync(s);
+        };
 
         Vault.LockStateChanged += (_, _) => _ui.BeginInvoke(OnLockStateChanged);
         _idleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         _idleTimer.Tick += (_, _) => CheckIdle();
+        _backupTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
+        _backupTimer.Tick += (_, _) => RunAutoBackup();
         SystemEvents.SessionSwitch += OnSessionSwitch;
     }
 
@@ -44,7 +71,15 @@ public sealed partial class AppHost : IDisposable
     public SshAgentServer Agent { get; }
     public KnownHostsService KnownHosts { get; }
     public SessionLauncher Launcher { get; }
+    public SshClientFactory Ssh { get; }
     public KeySetupService KeySetup { get; }
+    public ServerInventoryService Inventory { get; }
+    public GeoIpService Geo { get; }
+    public HealthMonitor Health { get; }
+    public MetricsCollector Metrics { get; }
+    public PortForwardService Forwards { get; }
+    public BackupService Backup { get; }
+    public ScriptRunner Scripts { get; }
     public ControlServer Control { get; }
 
     public event EventHandler? StateChanged;
@@ -55,6 +90,7 @@ public sealed partial class AppHost : IDisposable
         Control.Start();
         _tray = new TrayIcon(this);
         _idleTimer.Start();
+        _backupTimer.Start();
 
         if (!Vault.Exists)
         {
@@ -71,10 +107,19 @@ public sealed partial class AppHost : IDisposable
 
         if (startInTray)
         {
-            _tray.Balloon("SSH Manager", "Работает в трее и заблокирован. Щёлкните, чтобы разблокировать.");
+            _tray.Balloon("SSH Manager", L.Get("Tray.StartedLocked"));
             return;
         }
         ShowMainWindow();
+    }
+
+    /// <summary>null = Windows language.</summary>
+    public void SetLanguage(string? language)
+    {
+        SettingsStore.Settings.Language = language;
+        SettingsStore.Save();
+        L.Language = language;
+        _tray?.UpdateState();
     }
 
     // ---------- windows ----------
@@ -147,11 +192,65 @@ public sealed partial class AppHost : IDisposable
         if (!Vault.IsUnlocked)
         {
             Agent.ClearCache();
+            Health.Stop();
+            Metrics.Clear();
             _main?.Close();
             _main = null;
         }
+        else
+        {
+            Health.Start();
+            RefreshBackground(force: false);
+        }
         _tray?.UpdateState();
         StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// GeoIP for every server; inventory for servers without data whose host key is already trusted
+    /// (never prompts from the background).
+    /// </summary>
+    public void RefreshBackground(bool force)
+    {
+        if (!Vault.TryRead(d => d.Servers.Select(s => s.Clone()).ToList(), out var servers)) return;
+        foreach (var s in servers)
+        {
+            _ = Geo.RefreshAsync(s.Id, force);
+            if (!SettingsStore.Settings.AutoInventory && !force) continue;
+            if (!KnownHosts.IsKnown(s.Host, s.Port)) continue;
+            if (force ? ServerInventoryService.Supported(s) : s.Facts?.InventoryUpdated == null && Inventory.NeedsRefresh(s))
+                _ = Inventory.RefreshAsync(s.Id);
+        }
+        if (force) Health.CheckAll();
+    }
+
+    /// <summary>Everything about one server, now (menu "Refresh info").</summary>
+    public void RefreshServer(Guid id)
+    {
+        _ = Inventory.RefreshAsync(id, interactive: true);
+        _ = Geo.RefreshAsync(id, force: true);
+        Health.CheckNow(id);
+    }
+
+    /// <summary>Starts an ssh session; after the first one, learns the OS in the background.</summary>
+    public void Launch(ServerEntry server)
+    {
+        Launcher.Launch(server);
+        AfterSessionStarted(server);
+    }
+
+    private void AfterSessionStarted(ServerEntry server)
+    {
+        _ = Geo.RefreshAsync(server.Id);
+        if (!SettingsStore.Settings.AutoInventory || server.Facts?.OsId != null || !ServerInventoryService.Supported(server)) return;
+        var id = server.Id;
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(FirstInventoryDelay);
+            if (Vault.TryRead(d => d.Servers.FirstOrDefault(s => s.Id == id)?.Clone(), out var s) && s != null &&
+                KnownHosts.IsKnown(s.Host, s.Port) && s.Facts?.OsId == null)
+                await Inventory.RefreshAsync(id);
+        });
     }
 
     public void Connect(Guid serverId) => _ui.InvokeAsync(() => ConnectAsync(serverId));
@@ -163,11 +262,11 @@ public sealed partial class AppHost : IDisposable
         if (server == null) return;
         try
         {
-            Launcher.Launch(server);
+            Launch(server);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Не удалось открыть сессию", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(ex.Message, L.Get("Main.SessionFailed"), MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -175,15 +274,38 @@ public sealed partial class AppHost : IDisposable
     {
         var host = KnownHostsService.HostPattern(info.Host, info.Port);
         var text = info.Status == HostKeyStatus.Mismatch
-            ? $"ВНИМАНИЕ: ключ сервера {host} ИЗМЕНИЛСЯ!\n\nЭто может означать переустановку сервера или атаку «человек посередине».\n\nНовый ключ: {info.KeyType}\n{info.Fingerprint}\n\nЗаменить сохранённый ключ и продолжить?"
-            : $"Первое подключение к {host}.\n\nКлюч сервера: {info.KeyType}\n{info.Fingerprint}\n\nДоверять этому серверу и сохранить его ключ?";
+            ? L.F("HostKey.Changed", host, info.KeyType, info.Fingerprint)
+            : L.F("HostKey.New", host, info.KeyType, info.Fingerprint);
         var owner = Application.Current.Windows.OfType<Window>().FirstOrDefault(w => w.IsActive);
         var icon = info.Status == HostKeyStatus.Mismatch ? MessageBoxImage.Warning : MessageBoxImage.Question;
+        var title = L.Get("HostKey.Title");
         var result = owner != null
-            ? MessageBox.Show(owner, text, "Проверка ключа сервера", MessageBoxButton.YesNo, icon, MessageBoxResult.No)
-            : MessageBox.Show(text, "Проверка ключа сервера", MessageBoxButton.YesNo, icon, MessageBoxResult.No);
+            ? MessageBox.Show(owner, text, title, MessageBoxButton.YesNo, icon, MessageBoxResult.No)
+            : MessageBox.Show(text, title, MessageBoxButton.YesNo, icon, MessageBoxResult.No);
         return result == MessageBoxResult.Yes;
     });
+
+    private void OnServerDown(HealthTransition t)
+    {
+        if (!SettingsStore.Settings.NotifyOnServerDown || !Vault.TryRead(d => d.Servers.FirstOrDefault(s => s.Id == t.ServerId)?.Name, out var name) || name == null)
+            return;
+        _tray?.Balloon(L.Get("Health.DownTitle"), L.F("Health.DownText", name, t.After.Error), System.Windows.Forms.ToolTipIcon.Warning);
+    }
+
+    // ---------- backup ----------
+
+    private async void RunAutoBackup()
+    {
+        if (!Vault.IsUnlocked || !Backup.AutoDue) return;
+        try
+        {
+            await Backup.RunAsync(interactive: false);
+        }
+        catch (Exception ex)
+        {
+            _tray?.Balloon(L.Get("Backup.Title"), L.Get("Backup.AutoFailed") + " " + ex.Message, System.Windows.Forms.ToolTipIcon.Warning);
+        }
+    }
 
     public void Exit()
     {
@@ -199,7 +321,7 @@ public sealed partial class AppHost : IDisposable
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or System.IO.IOException)
         {
-            _tray?.Balloon("Автозапуск", "Не удалось изменить автозапуск: " + ex.Message, System.Windows.Forms.ToolTipIcon.Warning);
+            _tray?.Balloon(L.Get("Settings.Autostart.Title"), L.Get("Settings.Autostart.Failed") + " " + ex.Message, System.Windows.Forms.ToolTipIcon.Warning);
         }
     }
 
@@ -216,17 +338,17 @@ public sealed partial class AppHost : IDisposable
             case "launch":
             {
                 var spec = req.Token == null ? null : Launcher.TakeLaunch(req.Token);
-                return spec == null ? ControlResponse.Fail("Сессия не найдена или устарела") : new ControlResponse { Ok = true, Spec = spec };
+                return spec == null ? ControlResponse.Fail(L.Get("Cli.SessionNotFound")) : new ControlResponse { Ok = true, Spec = spec };
             }
 
             case "askpass":
             {
                 var value = req.Token == null ? null : Launcher.AnswerAskPass(req.Token);
-                return value == null ? ControlResponse.Fail("Нет пароля") : new ControlResponse { Ok = true, Value = value };
+                return value == null ? ControlResponse.Fail(L.Get("Ipc.NoPassword")) : new ControlResponse { Ok = true, Value = value };
             }
 
             case "list":
-                if (!await EnsureUnlockedAsync()) return ControlResponse.Fail("Хранилище заблокировано");
+                if (!await EnsureUnlockedAsync()) return ControlResponse.Fail(L.Get("Vault.Locked"));
                 return new ControlResponse
                 {
                     Ok = true,
@@ -237,7 +359,7 @@ public sealed partial class AppHost : IDisposable
 
             case "connect":
             {
-                if (!await EnsureUnlockedAsync()) return ControlResponse.Fail("Хранилище заблокировано");
+                if (!await EnsureUnlockedAsync()) return ControlResponse.Fail(L.Get("Vault.Locked"));
                 return await _ui.InvokeAsync(() =>
                 {
                     var server = FindServer(req.Name ?? "", out var error);
@@ -248,16 +370,17 @@ public sealed partial class AppHost : IDisposable
                         var s = d.Servers.FirstOrDefault(x => x.Id == server.Id);
                         if (s != null) s.LastConnected = DateTime.Now;
                     });
+                    AfterSessionStarted(server);
                     return new ControlResponse { Ok = true, Spec = spec };
                 });
             }
 
             default:
-                return ControlResponse.Fail("Неизвестная команда " + req.Op);
+                return ControlResponse.Fail(L.F("Ipc.UnknownOp", req.Op));
         }
     }
 
-    private Core.Models.ServerEntry? FindServer(string name, out string error)
+    private ServerEntry? FindServer(string name, out string error)
     {
         error = "";
         var servers = Vault.Data.Servers;
@@ -268,8 +391,8 @@ public sealed partial class AppHost : IDisposable
             : servers.Where(s => s.Name.Contains(name, StringComparison.CurrentCultureIgnoreCase)).ToList();
         if (partial.Count == 1) return partial[0];
         error = partial.Count == 0
-            ? $"Сервер «{name}» не найден (sshm list — список)"
-            : "Подходит несколько серверов: " + string.Join(", ", partial.Select(s => s.Name));
+            ? L.F("Ipc.ServerNotFound", name)
+            : L.Get("Ipc.ServerAmbiguous") + " " + string.Join(", ", partial.Select(s => s.Name));
         return null;
     }
 
@@ -306,6 +429,8 @@ public sealed partial class AppHost : IDisposable
     {
         SystemEvents.SessionSwitch -= OnSessionSwitch;
         _idleTimer.Stop();
+        _backupTimer.Stop();
+        Health.Dispose();
         Agent.Dispose();
         Control.Dispose();
         _tray?.Dispose();

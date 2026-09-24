@@ -12,6 +12,8 @@ public sealed class LaunchSpec
     public Dictionary<string, string> Env { get; set; } = [];
     public string Title { get; set; } = "";
     public bool PauseOnError { get; set; }
+    /// <summary>Keep the window open after ssh exits (scripts, logs).</summary>
+    public bool PauseAlways { get; set; }
 }
 
 public sealed class ControlRequest
@@ -45,8 +47,8 @@ public static class ControlClient
         var writer = new StreamWriter(pipe, new UTF8Encoding(false)) { AutoFlush = true };
         await writer.WriteLineAsync(JsonSerializer.Serialize(request));
         using var reader = new StreamReader(pipe, Encoding.UTF8);
-        var line = await reader.ReadLineAsync() ?? throw new IOException("SSH Manager закрыл соединение");
-        return JsonSerializer.Deserialize<ControlResponse>(line) ?? ControlResponse.Fail("Пустой ответ");
+        var line = await reader.ReadLineAsync() ?? throw new IOException(L.Get("Ipc.Closed"));
+        return JsonSerializer.Deserialize<ControlResponse>(line) ?? ControlResponse.Fail(L.Get("Ipc.Empty"));
     }
 }
 

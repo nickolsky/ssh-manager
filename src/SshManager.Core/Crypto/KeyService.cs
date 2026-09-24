@@ -82,7 +82,7 @@ public static class KeyService
                     InverseQ = Bytes(rsa.InverseQ),
                 }),
                 _ => throw new NotSupportedException(
-                    $"Тип ключа {file.Key.GetType().Name} не поддерживается. Поддерживаются Ed25519 и RSA."),
+                    L.F("Key.UnsupportedType", file.Key.GetType().Name)),
             };
             return ToEntry(pair, name, "");
         }

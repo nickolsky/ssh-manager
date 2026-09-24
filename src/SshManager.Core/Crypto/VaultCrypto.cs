@@ -49,7 +49,7 @@ public static class VaultCrypto
     public static KdfParams ReadParams(byte[] file)
     {
         if (file.Length < HeaderLen + TagLen || !file.AsSpan(0, 8).SequenceEqual(Magic))
-            throw new InvalidDataException("Файл хранилища повреждён или имеет неизвестный формат");
+            throw new InvalidDataException(L.Get("Vault.Corrupt"));
         var s = file.AsSpan(8);
         return new KdfParams(
             BinaryPrimitives.ReadInt32LittleEndian(s),
@@ -95,4 +95,4 @@ public static class VaultCrypto
     }
 }
 
-public sealed class WrongPasswordException() : Exception("Неверный мастер-пароль");
+public sealed class WrongPasswordException() : Exception(L.Get("Vault.WrongPassword"));

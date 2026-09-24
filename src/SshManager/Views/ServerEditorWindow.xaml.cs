@@ -15,10 +15,18 @@ public partial class ServerEditorWindow : Window
         InitializeComponent();
         _host = host;
         _server = server;
-        Title = isNew ? "Новый сервер" : $"Сервер — {server.Name}";
+        Title = isNew ? L.Get("Editor.NewTitle") : L.F("Editor.EditTitle", server.Name);
 
-        GroupBox.ItemsSource = host.Vault.Data.Servers.Select(s => s.Group).Where(g => !string.IsNullOrWhiteSpace(g))
-            .Distinct().OrderBy(g => g).ToList();
+        // every group path and its parents ("VPN", "VPN/Europe")
+        GroupBox.ItemsSource = host.Vault.Data.Servers
+            .SelectMany(s =>
+            {
+                var parts = ViewModels.MainViewModel.SplitGroup(s.Group);
+                return Enumerable.Range(1, parts.Length).Select(n => string.Join("/", parts.Take(n)));
+            })
+            .Distinct(StringComparer.CurrentCultureIgnoreCase).OrderBy(g => g, StringComparer.CurrentCultureIgnoreCase).ToList();
+        MonitorBox.Text = server.MonitorIntervalMinutes?.ToString() ?? "";
+        MonitorHint.Text = L.F("Editor.MonitorHint", host.SettingsStore.Settings.MonitorIntervalMinutes);
         NameBox.Text = server.Name;
         GroupBox.Text = server.Group;
         HostBox.Text = server.Host;
@@ -78,31 +86,42 @@ public partial class ServerEditorWindow : Window
         var host = HostBox.Text.Trim();
         if (host.Length == 0)
         {
-            ShowError("Укажите IP-адрес или имя хоста.");
+            ShowError(L.Get("Editor.NeedHost"));
             return;
         }
         if (!int.TryParse(PortBox.Text.Trim(), out var port) || port is < 1 or > 65535)
         {
-            ShowError("Порт должен быть числом от 1 до 65535.");
+            ShowError(L.Get("Editor.BadPort"));
             return;
         }
         var user = UserBox.Text.Trim();
         if (user.Length == 0)
         {
-            ShowError("Укажите пользователя.");
+            ShowError(L.Get("Editor.NeedUser"));
             return;
         }
         var auth = AuthKey.IsChecked == true ? AuthMode.Key : AuthMode.Password;
         var key = KeyBox.SelectedItem as KeyEntry;
         if (auth == AuthMode.Key && key == null)
         {
-            ShowError("Выберите ключ или создайте новый.");
+            ShowError(L.Get("Editor.NeedKey"));
             return;
+        }
+        int? monitor = null;
+        if (MonitorBox.Text.Trim() is { Length: > 0 } m)
+        {
+            if (!int.TryParse(m, out var minutes) || minutes < 0)
+            {
+                ShowError(L.Get("Editor.BadMonitor"));
+                return;
+            }
+            monitor = minutes;
         }
         var password = ShowPassword.IsChecked == true ? PasswordPlain.Text : PasswordBox.Password;
 
         _server.Name = NameBox.Text.Trim() is { Length: > 0 } n ? n : host;
-        _server.Group = GroupBox.Text.Trim();
+        _server.Group = string.Join("/", ViewModels.MainViewModel.SplitGroup(GroupBox.Text));
+        _server.MonitorIntervalMinutes = monitor;
         _server.Host = host;
         _server.Port = port;
         _server.Username = user;

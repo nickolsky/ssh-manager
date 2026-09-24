@@ -1,7 +1,8 @@
 <Window x:Class="SshManager.Views.KeySetupWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Настройка входа по ключу" Width="620" Height="460" MinWidth="480" MinHeight="360"
+        xmlns:l="clr-namespace:SshManager.Localization"
+        Title="{l:Tr KeySetup.Title}" Width="620" Height="460" MinWidth="480" MinHeight="360"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
     <Grid Margin="24,16,24,20">
         <Grid.RowDefinitions>
@@ -13,18 +14,17 @@
         </Grid.RowDefinitions>
         <TextBlock x:Name="Header" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
         <StackPanel Grid.Row="1" Margin="0,10,0,10">
-            <TextBlock Style="{StaticResource Hint}"
-                       Text="Программа войдёт на сервер по сохранённому паролю, добавит публичный ключ в ~/.ssh/authorized_keys, проверит вход по ключу и переключит сервер на ключ. Вход по паролю на сервере не отключается." />
-            <TextBlock Style="{StaticResource FieldLabel}" Text="Ключ" />
+            <TextBlock Style="{StaticResource Hint}" Text="{l:Tr KeySetup.Hint}" />
+            <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Editor.Key}" />
             <ComboBox x:Name="KeyBox" DisplayMemberPath="Name" />
         </StackPanel>
         <TextBox x:Name="Log" Grid.Row="2" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas"
                  VerticalScrollBarVisibility="Auto" />
         <ProgressBar x:Name="Busy" Grid.Row="3" IsIndeterminate="True" Height="4" Margin="0,10,0,0" Visibility="Hidden" />
         <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
-            <Button x:Name="StartButton" Content="Настроить" IsDefault="True" Click="OnStart"
+            <Button x:Name="StartButton" Content="{l:Tr KeySetup.Start}" IsDefault="True" Click="OnStart"
                     Style="{DynamicResource AccentButtonStyle}" MinWidth="110" />
-            <Button x:Name="CloseButton" Content="Закрыть" IsCancel="True" Style="{StaticResource DialogButton}" />
+            <Button x:Name="CloseButton" Content="{l:Tr Common.Close}" IsCancel="True" Style="{StaticResource DialogButton}" />
         </StackPanel>
     </Grid>
 </Window>

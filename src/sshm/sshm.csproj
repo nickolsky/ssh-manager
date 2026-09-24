@@ -11,4 +11,8 @@
     <ProjectReference Include="..\SshManager.Core\SshManager.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Using Include="SshManager.Core.Localization" />
+  </ItemGroup>
+
 </Project>

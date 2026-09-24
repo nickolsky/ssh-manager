@@ -19,12 +19,12 @@ public partial class ChangePasswordWindow : Window
         string cur = Current.Password, pwd = New.Password;
         if (pwd.Length < 8)
         {
-            ShowError("Новый пароль должен быть не короче 8 символов.");
+            ShowError(L.Get("ChangePwd.TooShort"));
             return;
         }
         if (pwd != Confirm.Password)
         {
-            ShowError("Пароли не совпадают.");
+            ShowError(L.Get("Unlock.Mismatch"));
             return;
         }
         OkButton.IsEnabled = false;
@@ -32,7 +32,7 @@ public partial class ChangePasswordWindow : Window
         try
         {
             await Task.Run(() => _vault.ChangePassword(cur, pwd));
-            MessageBox.Show(this, "Мастер-пароль изменён.", "SSH Manager", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, L.Get("ChangePwd.Done"), "SSH Manager", MessageBoxButton.OK, MessageBoxImage.Information);
             DialogResult = true;
         }
         catch (Exception ex)

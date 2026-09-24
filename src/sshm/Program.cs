@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using SshManager.Core;
 using SshManager.Core.Pipes;
+using SshManager.Core.Storage;
 
 namespace SshManager.Cli;
 
@@ -17,6 +18,16 @@ internal static partial class Program
 {
     private static async Task<int> Main(string[] args)
     {
+        try
+        {
+            var settings = new SettingsService();
+            settings.Load();
+            L.Language = settings.Settings.Language;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
+
         var askToken = Environment.GetEnvironmentVariable("SSHM_ASKPASS_TOKEN");
         if (!string.IsNullOrEmpty(askToken) && (args.Length == 0 || !IsCommand(args[0])))
             return await AskPass(askToken, args.Length > 0 ? args[0] : "");
@@ -44,11 +55,7 @@ internal static partial class Program
 
     private static int Help()
     {
-        Console.WriteLine("""
-            SSH Manager — консольный помощник
-              sshm <имя сервера|хост>   подключиться к сохранённому серверу в этом окне
-              sshm list                 список серверов
-            """);
+        Console.WriteLine(L.Get("Cli.Help"));
         return 0;
     }
 
@@ -57,7 +64,7 @@ internal static partial class Program
         var r = await Send(new ControlRequest { Op = "launch", Token = token }, startApp: false);
         if (!r.Ok || r.Spec == null)
         {
-            Console.Error.WriteLine("sshm: " + (r.Error ?? "сессия не найдена или устарела"));
+            Console.Error.WriteLine("sshm: " + (r.Error ?? L.Get("Cli.SessionNotFound")));
             Pause();
             return 1;
         }
@@ -69,7 +76,7 @@ internal static partial class Program
         var r = await Send(new ControlRequest { Op = "connect", Name = name }, startApp: true);
         if (!r.Ok || r.Spec == null)
         {
-            Console.Error.WriteLine("sshm: " + (r.Error ?? "не удалось подключиться"));
+            Console.Error.WriteLine("sshm: " + (r.Error ?? L.Get("Cli.ConnectFailed")));
             return 1;
         }
         return RunSsh(r.Spec);
@@ -89,7 +96,7 @@ internal static partial class Program
 
     private static int RunSsh(LaunchSpec spec)
     {
-        if (spec.PauseOnError && !string.IsNullOrEmpty(spec.Title)) Console.Title = spec.Title;
+        if ((spec.PauseOnError || spec.PauseAlways) && !string.IsNullOrEmpty(spec.Title)) Console.Title = spec.Title;
         var psi = new ProcessStartInfo(spec.SshPath) { UseShellExecute = false };
         foreach (var a in spec.Args) psi.ArgumentList.Add(a);
         foreach (var (k, v) in spec.Env) psi.Environment[k] = v;
@@ -98,7 +105,7 @@ internal static partial class Program
         Console.CancelKeyPress += (_, e) => e.Cancel = true;
         using var p = Process.Start(psi)!;
         p.WaitForExit();
-        if (p.ExitCode != 0 && spec.PauseOnError) Pause();
+        if (spec.PauseAlways || (p.ExitCode != 0 && spec.PauseOnError)) Pause();
         return p.ExitCode;
     }
 
@@ -110,7 +117,7 @@ internal static partial class Program
         }
         catch (TimeoutException) when (startApp && File.Exists(AppPaths.MainExe))
         {
-            Console.Error.WriteLine("sshm: запускаю SSH Manager…");
+            Console.Error.WriteLine("sshm: " + L.Get("Cli.Starting"));
             Process.Start(new ProcessStartInfo(AppPaths.MainExe, "--tray") { UseShellExecute = true })?.Dispose();
             for (int i = 0; i < 15; i++)
             {
@@ -122,11 +129,11 @@ internal static partial class Program
                 {
                 }
             }
-            return ControlResponse.Fail("SSH Manager не отвечает");
+            return ControlResponse.Fail(L.Get("Cli.NotResponding"));
         }
         catch (TimeoutException)
         {
-            return ControlResponse.Fail("SSH Manager не запущен");
+            return ControlResponse.Fail(L.Get("Cli.NotRunning"));
         }
     }
 
@@ -136,7 +143,7 @@ internal static partial class Program
     {
         if (prompt.Contains("(yes/no", StringComparison.OrdinalIgnoreCase))
         {
-            var yes = MessageBoxW(IntPtr.Zero, prompt, "SSH Manager — новый сервер",
+            var yes = MessageBoxW(IntPtr.Zero, prompt, L.Get("Cli.NewHostTitle"),
                 0x4 /*YESNO*/ | 0x30 /*WARNING*/ | 0x40000 /*TOPMOST*/) == 6;
             return Answer(yes ? "yes" : "no");
         }
@@ -148,11 +155,11 @@ internal static partial class Program
             {
                 var r = await ControlClient.SendAsync(new ControlRequest { Op = "askpass", Token = token, Prompt = prompt });
                 if (r.Ok && r.Value != null) return Answer(r.Value);
-                WriteConsole("\r\nSSH Manager: сохранённый пароль не подошёл или сессия устарела.\r\n");
+                WriteConsole("\r\n" + L.Get("Cli.PasswordRejected") + "\r\n");
             }
             catch (TimeoutException)
             {
-                WriteConsole("\r\nSSH Manager не запущен — пароль недоступен.\r\n");
+                WriteConsole("\r\n" + L.Get("Cli.NoPassword") + "\r\n");
             }
             return 1;
         }
@@ -201,7 +208,7 @@ internal static partial class Program
     private static void Pause()
     {
         Console.Error.WriteLine();
-        Console.Error.WriteLine("Нажмите любую клавишу, чтобы закрыть окно…");
+        Console.Error.WriteLine(L.Get("Cli.PressKey"));
         try
         {
             Console.ReadKey(true);

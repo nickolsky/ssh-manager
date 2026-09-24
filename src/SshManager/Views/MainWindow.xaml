@@ -1,184 +1,573 @@
 <Window x:Class="SshManager.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:vm="clr-namespace:SshManager.ViewModels"
-        Title="SSH Manager" Width="1000" Height="640" MinWidth="760" MinHeight="420"
+        xmlns:c="clr-namespace:SshManager.Views.Controls"
+        xmlns:l="clr-namespace:SshManager.Localization"
+        Title="SSH Manager" Width="1440" Height="740" MinWidth="780" MinHeight="440"
         WindowStartupLocation="CenterScreen">
     <Window.InputBindings>
         <KeyBinding Key="N" Modifiers="Control" Command="{Binding AddServerCommand}" />
         <KeyBinding Key="L" Modifiers="Control" Command="{Binding LockCommand}" />
+        <KeyBinding Key="F5" Command="{Binding RefreshAllCommand}" />
     </Window.InputBindings>
 
-    <Grid Margin="12,8,12,8">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
+    <Window.Resources>
+        <!-- context menu items per selected node kind -->
+        <Style x:Key="MiServer" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="server">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="SepServer" TargetType="Separator" BasedOn="{StaticResource {x:Type Separator}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="server">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="MiContainer" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="container">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="MiService" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="service">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="MiForward" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="server">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="forward">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="MiGroup" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="group">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
 
-        <TabControl x:Name="Tabs">
-            <!-- ================= SERVERS ================= -->
-            <TabItem Header="Серверы">
-                <Grid Margin="0,10,0,0">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <DockPanel Margin="0,0,0,10">
-                        <TextBox DockPanel.Dock="Right" Width="240" x:Name="SearchBox"
-                                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                                 ToolTip="Поиск по названию, адресу, группе, заметкам (Ctrl+F)" />
-                        <TextBlock DockPanel.Dock="Right" Text="Поиск:" VerticalAlignment="Center" Margin="0,0,8,0" Opacity="0.7" />
-                        <WrapPanel>
-                            <Button Content="▶  Подключиться" Command="{Binding ConnectCommand}"
-                                    Style="{DynamicResource AccentButtonStyle}" Margin="0,0,6,0" Padding="14,5" />
-                            <Button Content="+ Сервер" Command="{Binding AddServerCommand}" Style="{StaticResource ToolbarButton}" ToolTip="Ctrl+N" />
-                            <Button Content="Изменить" Command="{Binding EditServerCommand}" Style="{StaticResource ToolbarButton}" />
-                            <Button Content="🔑 Настроить вход по ключу" Command="{Binding SetupKeyCommand}" Style="{StaticResource ToolbarButton}"
-                                    ToolTip="Войти по паролю, установить ключ в authorized_keys и переключить сервер на ключ" />
-                            <Button Content="Проверить" Command="{Binding TestCommand}" Style="{StaticResource ToolbarButton}" />
-                        </WrapPanel>
-                    </DockPanel>
+        <Style x:Key="InstallItemLeaf" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Header" Value="{Binding Header}" />
+            <Setter Property="Command" Value="{Binding Command}" />
+            <Setter Property="CommandParameter" Value="{Binding Parameter}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Bold}" Value="True">
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="InstallItem" TargetType="MenuItem" BasedOn="{StaticResource InstallItemLeaf}">
+            <Setter Property="ItemsSource" Value="{Binding Children}" />
+            <Setter Property="ItemContainerStyle" Value="{StaticResource InstallItemLeaf}" />
+        </Style>
 
-                    <DataGrid Grid.Row="1" x:Name="ServersGrid" ItemsSource="{Binding ServersView}"
-                              SelectedItem="{Binding SelectedServer}" AutoGenerateColumns="False" IsReadOnly="True"
-                              SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="None"
-                              CanUserAddRows="False" CanUserDeleteRows="False"
-                              MouseDoubleClick="OnServerDoubleClick" PreviewKeyDown="OnServersKeyDown">
-                        <DataGrid.GroupStyle>
-                            <GroupStyle>
-                                <GroupStyle.HeaderTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Orientation="Horizontal" Margin="4,10,0,4">
-                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                                            <TextBlock Text="{Binding ItemCount, StringFormat=' ({0})'}" Opacity="0.6" />
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </GroupStyle.HeaderTemplate>
-                            </GroupStyle>
-                        </DataGrid.GroupStyle>
-                        <DataGrid.Columns>
-                            <!-- Pixel widths: star widths collapse on first show in a grouped DataGrid.
-                                 The last column fills the rest; user-resized widths are saved in settings. -->
-                            <DataGridTextColumn Header="Название" Binding="{Binding Name}" Width="220" MinWidth="80" />
-                            <DataGridTextColumn Header="Адрес" Binding="{Binding Address}" Width="220" MinWidth="80" />
-                            <DataGridTextColumn Header="Вход" Binding="{Binding AuthText}" Width="170" MinWidth="70" />
-                            <DataGridTextColumn Header="Последнее подключение" Binding="{Binding LastConnected}" Width="170" MinWidth="80" />
-                            <DataGridTextColumn Header="Заметки" Binding="{Binding Notes}" Width="*" MinWidth="120" />
-                        </DataGrid.Columns>
-                        <DataGrid.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="Подключиться" Command="{Binding ConnectCommand}" FontWeight="SemiBold" />
-                                <Separator />
-                                <MenuItem Header="Изменить…" Command="{Binding EditServerCommand}" />
-                                <MenuItem Header="Дублировать…" Command="{Binding DuplicateServerCommand}" />
-                                <MenuItem Header="Копировать команду ssh" Command="{Binding CopyCommandCommand}" />
-                                <Separator />
-                                <MenuItem Header="Настроить вход по ключу…" Command="{Binding SetupKeyCommand}" />
-                                <MenuItem Header="Проверить подключение" Command="{Binding TestCommand}" />
-                                <Separator />
-                                <MenuItem Header="Удалить" Command="{Binding DeleteServerCommand}" />
-                            </ContextMenu>
-                        </DataGrid.ContextMenu>
-                    </DataGrid>
-                </Grid>
-            </TabItem>
+        <Style x:Key="CountryBadge" TargetType="Border">
+            <Setter Property="CornerRadius" Value="3" />
+            <Setter Property="Padding" Value="4,0" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Background" Value="{DynamicResource SubtleFillColorTertiaryBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding CountryCode}" Value="">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
 
-            <!-- ================= KEYS ================= -->
-            <TabItem Header="Ключи">
-                <Grid Margin="0,10,0,0">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <WrapPanel Margin="0,0,0,10">
-                        <Button Content="+ Сгенерировать" Command="{Binding GenerateKeyCommand}"
-                                Style="{DynamicResource AccentButtonStyle}" Margin="0,0,6,0" Padding="14,5" />
-                        <Button Content="Импорт…" Command="{Binding ImportKeyCommand}" Style="{StaticResource ToolbarButton}" />
-                        <Button Content="Копировать публичный ключ" Command="{Binding CopyPublicKeyCommand}" Style="{StaticResource ToolbarButton}" />
-                        <Button Content="Экспорт приватного…" Command="{Binding ExportPrivateKeyCommand}" Style="{StaticResource ToolbarButton}" />
-                        <Button Content="Переименовать" Command="{Binding RenameKeyCommand}" Style="{StaticResource ToolbarButton}" />
-                        <Button Content="Удалить" Command="{Binding DeleteKeyCommand}" Style="{StaticResource ToolbarButton}" />
-                    </WrapPanel>
-                    <DataGrid Grid.Row="1" x:Name="KeysGrid" ItemsSource="{Binding Keys}" SelectedItem="{Binding SelectedKey}"
-                              AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
-                              HeadersVisibility="Column" GridLinesVisibility="None" CanUserAddRows="False">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="Название" Binding="{Binding Name}" Width="190" MinWidth="80" />
-                            <DataGridTextColumn Header="Тип" Binding="{Binding Type}" Width="80" MinWidth="60" />
-                            <DataGridTextColumn Header="Отпечаток" Binding="{Binding Fingerprint}" Width="330" MinWidth="120" />
-                            <DataGridTextColumn Header="Комментарий" Binding="{Binding Comment}" Width="170" MinWidth="80" />
-                            <DataGridTextColumn Header="Создан" Binding="{Binding Created}" Width="95" MinWidth="70" />
-                            <DataGridTextColumn Header="Серверы" Binding="{Binding UsedBy}" Width="*" MinWidth="120" />
-                        </DataGrid.Columns>
-                        <DataGrid.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="Копировать публичный ключ" Command="{Binding CopyPublicKeyCommand}" />
-                                <MenuItem Header="Экспорт приватного…" Command="{Binding ExportPrivateKeyCommand}" />
-                                <MenuItem Header="Переименовать…" Command="{Binding RenameKeyCommand}" />
-                                <Separator />
-                                <MenuItem Header="Удалить" Command="{Binding DeleteKeyCommand}" />
-                            </ContextMenu>
-                        </DataGrid.ContextMenu>
-                    </DataGrid>
-                </Grid>
-            </TabItem>
+    <DockPanel>
+        <Menu DockPanel.Dock="Top" Padding="8,2,8,0" Background="Transparent">
+            <MenuItem Header="{l:Tr Menu.File}">
+                <MenuItem Header="{l:Tr Menu.NewServer}" Command="{Binding AddServerCommand}" InputGestureText="Ctrl+N" />
+                <Separator />
+                <MenuItem Header="{l:Tr Menu.BackupNow}" Command="{Binding BackupNowCommand}" />
+                <MenuItem Header="{l:Tr Menu.OpenDataFolder}" Command="{Binding OpenDataFolderCommand}" />
+                <Separator />
+                <MenuItem Header="{l:Tr Menu.Lock}" Command="{Binding LockCommand}" InputGestureText="Ctrl+L" />
+                <MenuItem Header="{l:Tr Menu.Exit}" Command="{Binding ExitCommand}" />
+            </MenuItem>
+            <MenuItem Header="{l:Tr Menu.View}">
+                <MenuItem Header="{l:Tr Menu.ExpandAll}" Command="{Binding ExpandAllCommand}" />
+                <MenuItem Header="{l:Tr Menu.CollapseAll}" Command="{Binding CollapseAllCommand}" />
+                <Separator />
+                <MenuItem Header="{l:Tr Menu.RefreshAll}" Command="{Binding RefreshAllCommand}" InputGestureText="F5" />
+            </MenuItem>
+            <MenuItem Header="{l:Tr Menu.Language}">
+                <MenuItem Header="{l:Tr Lang.System}" IsChecked="{Binding IsLangSystem, Mode=OneWay}"
+                          Command="{Binding SetLanguageCommand}" CommandParameter="system" />
+                <MenuItem Header="Русский" IsChecked="{Binding IsLangRu, Mode=OneWay}"
+                          Command="{Binding SetLanguageCommand}" CommandParameter="ru" />
+                <MenuItem Header="English" IsChecked="{Binding IsLangEn, Mode=OneWay}"
+                          Command="{Binding SetLanguageCommand}" CommandParameter="en" />
+            </MenuItem>
+            <MenuItem Header="{l:Tr Menu.Help}">
+                <MenuItem Header="{l:Tr Menu.About}" Command="{Binding AboutCommand}" />
+            </MenuItem>
+        </Menu>
 
-            <!-- ================= SETTINGS ================= -->
-            <TabItem Header="Настройки">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="4,4,16,16" MaxWidth="720" HorizontalAlignment="Left" DataContext="{Binding Settings}">
-                        <TextBlock Style="{StaticResource SectionHeader}" Text="Запуск и трей" />
-                        <CheckBox Content="Запускать вместе с Windows (сразу в трей, заблокированным)" IsChecked="{Binding Autostart}" />
-                        <CheckBox Content="Кнопка закрытия сворачивает в трей (агент продолжает работать)" IsChecked="{Binding CloseToTray}" Margin="0,8,0,0" />
+        <Grid Margin="12,6,12,8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
-                        <TextBlock Style="{StaticResource SectionHeader}" Text="Безопасность" />
+            <TabControl x:Name="Tabs" SelectedIndex="{Binding SelectedTab}">
+                <!-- ================= SERVERS ================= -->
+                <TabItem>
+                    <TabItem.Header>
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Автоблокировка после простоя ПК, минут (0 — никогда):" VerticalAlignment="Center" />
-                            <TextBox Width="70" Margin="10,0,0,0" Text="{Binding AutoLockMinutes, UpdateSourceTrigger=LostFocus}" />
+                            <TextBlock Text="&#xE977;" FontFamily="{StaticResource IconFont}" Margin="0,1,8,0" VerticalAlignment="Center" />
+                            <TextBlock Text="{l:Tr Tab.Servers}" />
                         </StackPanel>
-                        <CheckBox Content="Блокировать при блокировке Windows (Win+L)" IsChecked="{Binding LockOnWindowsLock}" Margin="0,8,0,0" />
-                        <CheckBox Content="Показывать окно разблокировки, когда ssh / git / VS Code обращаются к агенту"
-                                  IsChecked="{Binding UnlockOnAgentRequest}" Margin="0,8,0,0" />
-                        <Button Content="Сменить мастер-пароль…" HorizontalAlignment="Left" Margin="0,12,0,0"
-                                Command="{Binding DataContext.ChangePasswordCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                    </TabItem.Header>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <DockPanel Margin="0,0,0,10">
+                            <TextBox DockPanel.Dock="Right" Width="240" x:Name="SearchBox"
+                                     Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTip="{l:Tr Main.SearchTip}" />
+                            <TextBlock DockPanel.Dock="Right" Text="{l:Tr Main.Search}" VerticalAlignment="Center" Margin="0,0,8,0" Opacity="0.7" />
+                            <WrapPanel>
+                                <Button Command="{Binding ConnectCommand}" Style="{DynamicResource AccentButtonStyle}" Margin="0,0,6,0" Padding="14,5">
+                                    <TextBlock><Run Text="▶  " /><Run Text="{l:Tr Main.Connect}" /></TextBlock>
+                                </Button>
+                                <Button Content="{l:Tr Main.AddServer}" Command="{Binding AddServerCommand}" Style="{StaticResource ToolbarButton}" ToolTip="Ctrl+N" />
+                                <Button Content="{l:Tr Main.Edit}" Command="{Binding EditServerCommand}" Style="{StaticResource ToolbarButton}" />
+                                <Button Command="{Binding SetupKeyCommand}" Style="{StaticResource ToolbarButton}" ToolTip="{l:Tr Main.SetupKeyTip}">
+                                    <TextBlock><Run Text="🔑 " /><Run Text="{l:Tr Main.SetupKey}" /></TextBlock>
+                                </Button>
+                                <Button Content="{l:Tr Main.Test}" Command="{Binding TestCommand}" Style="{StaticResource ToolbarButton}" />
+                                <Button Content="{l:Tr Main.PortForwards}" Command="{Binding PortForwardsCommand}" Style="{StaticResource ToolbarButton}" />
+                                <Button Command="{Binding RefreshAllCommand}" Style="{StaticResource ToolbarButton}" ToolTip="{l:Tr Main.RefreshAllTip}">
+                                    <TextBlock Text="&#xE72C;" FontFamily="{StaticResource IconFont}" />
+                                </Button>
+                            </WrapPanel>
+                        </DockPanel>
 
-                        <TextBlock Style="{StaticResource SectionHeader}" Text="Терминал" />
-                        <ComboBox SelectedIndex="{Binding TerminalIndex}" Width="360" HorizontalAlignment="Left">
-                            <ComboBoxItem Content="Windows Terminal — новая вкладка" />
-                            <ComboBoxItem Content="Windows Terminal — новое окно" />
-                            <ComboBoxItem Content="Обычное окно консоли" />
-                        </ComboBox>
-                        <TextBlock Style="{StaticResource Hint}" Text="{Binding TerminalInfo}" Margin="0,4,0,0" />
-                        <TextBlock Style="{StaticResource FieldLabel}" Text="Профиль Windows Terminal (необязательно)" />
-                        <TextBox Width="360" HorizontalAlignment="Left" Text="{Binding WindowsTerminalProfile, UpdateSourceTrigger=LostFocus}" />
-                        <TextBlock Style="{StaticResource FieldLabel}" Text="Путь к ssh.exe (пусто — системный OpenSSH)" />
-                        <TextBox Text="{Binding SshPath, UpdateSourceTrigger=LostFocus}" />
-                        <TextBlock Style="{StaticResource Hint}" Text="{Binding EffectiveSshPath}" Margin="0,4,0,0" />
-                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                            <TextBlock Text="ServerAliveInterval, секунд (0 — выкл.):" VerticalAlignment="Center" />
-                            <TextBox Width="70" Margin="10,0,0,0" Text="{Binding ServerAliveInterval, UpdateSourceTrigger=LostFocus}" />
+                        <c:TreeListView Grid.Row="1" x:Name="ServersTree" ItemsSource="{Binding Roots}"
+                                        SelectedItemChanged="OnTreeSelectionChanged"
+                                        PreviewMouseRightButtonDown="OnTreeRightButtonDown"
+                                        MouseDoubleClick="OnTreeDoubleClick" PreviewKeyDown="OnTreeKeyDown"
+                                        ContextMenuOpening="OnTreeContextMenuOpening">
+                            <c:TreeListView.ItemTemplate>
+                                <HierarchicalDataTemplate ItemsSource="{Binding Children}" />
+                            </c:TreeListView.ItemTemplate>
+                            <c:TreeListView.Columns>
+                                <GridViewColumn Header="{l:Tr Col.Name}" Width="230">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" Margin="{Binding Indent}" ToolTip="{Binding Tip}">
+                                                <ToggleButton Style="{StaticResource TreeExpander}" IsChecked="{Binding IsExpanded, Mode=TwoWay}" />
+                                                <Ellipse Style="{StaticResource StatusDot}" />
+                                                <TextBlock Text="{Binding Icon}" FontFamily="{StaticResource IconFont}" Margin="0,0,7,0"
+                                                           VerticalAlignment="Center" Opacity="0.75" />
+                                                <TextBlock x:Name="TitleText" Text="{Binding Title}" Style="{StaticResource CellText}" />
+                                                <Border x:Name="BadgeBox" Margin="6,0,0,0" Padding="6,0" CornerRadius="8" VerticalAlignment="Center"
+                                                        Background="{DynamicResource SubtleFillColorTertiaryBrush}">
+                                                    <TextBlock Text="{Binding Badge}" FontSize="11" Opacity="0.75" />
+                                                </Border>
+                                            </StackPanel>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsBold}" Value="True">
+                                                    <Setter TargetName="TitleText" Property="FontWeight" Value="SemiBold" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Badge}" Value="">
+                                                    <Setter TargetName="BadgeBox" Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="{l:Tr Col.Address}" Width="170">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Address}" Style="{StaticResource CellText}" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="{l:Tr Col.Os}" Width="110">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Os}" ToolTip="{Binding OsTip}" Style="{StaticResource CellText}" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="{l:Tr Col.Cpu}" Width="95">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel x:Name="Panel" Orientation="Horizontal" ToolTip="{Binding UsageTip}" Background="Transparent">
+                                                <ProgressBar Style="{StaticResource UsageBar}" Value="{Binding CpuPercent, Mode=OneWay}" />
+                                                <TextBlock Text="{Binding Cpu}" Style="{StaticResource CellText}" />
+                                            </StackPanel>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding CpuPercent}" Value="{x:Null}">
+                                                    <Setter TargetName="Panel" Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="{l:Tr Col.Mem}" Width="140">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel x:Name="Panel" Orientation="Horizontal" ToolTip="{Binding UsageTip}" Background="Transparent">
+                                                <ProgressBar Style="{StaticResource UsageBar}" Value="{Binding MemPercent, Mode=OneWay}" />
+                                                <TextBlock Text="{Binding Mem}" Style="{StaticResource CellText}" />
+                                            </StackPanel>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding MemPercent}" Value="{x:Null}">
+                                                    <Setter TargetName="Panel" Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="{l:Tr Col.Region}" Width="150">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" ToolTip="{Binding RegionTip}" Background="Transparent">
+                                                <Border Style="{StaticResource CountryBadge}">
+                                                    <TextBlock Text="{Binding CountryCode}" FontSize="11" FontWeight="SemiBold" />
+                                                </Border>
+                                                <TextBlock Text="{Binding Region}" Style="{StaticResource CellText}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="{l:Tr Col.Forwards}" Width="170">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Forwards}" ToolTip="{Binding ForwardsTip}" Style="{StaticResource CellText}" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="{l:Tr Col.Auth}" Width="100">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Auth}" Style="{StaticResource CellText}" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="{l:Tr Col.LastConnected}" Width="120">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding LastConnected}" Style="{StaticResource CellText}" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="{l:Tr Col.Notes}" Width="150">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Notes}" ToolTip="{Binding Notes}" Style="{StaticResource CellText}" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                            </c:TreeListView.Columns>
+                            <c:TreeListView.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="{l:Tr Ctx.Connect}" Command="{Binding ConnectCommand}" FontWeight="SemiBold" Style="{StaticResource MiServer}" />
+                                    <Separator Style="{StaticResource SepServer}" />
+                                    <MenuItem Header="{l:Tr Ctx.Install}" Style="{StaticResource MiServer}"
+                                              ItemsSource="{Binding InstallItems}" ItemContainerStyle="{StaticResource InstallItem}" />
+                                    <MenuItem Header="{l:Tr Ctx.PortForwards}" Command="{Binding PortForwardsCommand}" Style="{StaticResource MiForward}" />
+                                    <MenuItem Header="{l:Tr Ctx.RefreshInfo}" Command="{Binding RefreshInfoCommand}" Style="{StaticResource MiServer}" />
+                                    <MenuItem Header="{l:Tr Ctx.CheckNow}" Command="{Binding CheckNowCommand}" Style="{StaticResource MiServer}" />
+                                    <Separator Style="{StaticResource SepServer}" />
+                                    <MenuItem Header="{l:Tr Ctx.Edit}" Command="{Binding EditServerCommand}" Style="{StaticResource MiServer}" />
+                                    <MenuItem Header="{l:Tr Ctx.Duplicate}" Command="{Binding DuplicateServerCommand}" Style="{StaticResource MiServer}" />
+                                    <MenuItem Header="{l:Tr Ctx.CopyCommand}" Command="{Binding CopyCommandCommand}" Style="{StaticResource MiServer}" />
+                                    <Separator Style="{StaticResource SepServer}" />
+                                    <MenuItem Header="{l:Tr Ctx.SetupKey}" Command="{Binding SetupKeyCommand}" Style="{StaticResource MiServer}" />
+                                    <MenuItem Header="{l:Tr Ctx.Test}" Command="{Binding TestCommand}" Style="{StaticResource MiServer}" />
+                                    <Separator Style="{StaticResource SepServer}" />
+                                    <MenuItem Header="{l:Tr Ctx.Delete}" Command="{Binding DeleteServerCommand}" Style="{StaticResource MiServer}" />
+
+                                    <MenuItem Header="{l:Tr Ctx.ContainerLogs}" Command="{Binding ContainerLogsCommand}" FontWeight="SemiBold" Style="{StaticResource MiContainer}" />
+                                    <MenuItem Header="{l:Tr Ctx.ContainerRestart}" Command="{Binding ContainerRestartCommand}" Style="{StaticResource MiContainer}" />
+
+                                    <MenuItem Header="{l:Tr Ctx.ServiceStatus}" Command="{Binding ServiceStatusCommand}" FontWeight="SemiBold" Style="{StaticResource MiService}" />
+                                    <MenuItem Header="{l:Tr Ctx.ServiceLogs}" Command="{Binding ServiceLogsCommand}" Style="{StaticResource MiService}" />
+                                    <MenuItem Header="{l:Tr Ctx.ServiceRestart}" Command="{Binding ServiceRestartCommand}" Style="{StaticResource MiService}" />
+
+                                    <MenuItem Header="{l:Tr Ctx.AddServer}" Command="{Binding AddServerCommand}" Style="{StaticResource MiGroup}" />
+                                    <MenuItem Header="{l:Tr Menu.ExpandAll}" Command="{Binding ExpandAllCommand}" Style="{StaticResource MiGroup}" />
+                                    <MenuItem Header="{l:Tr Menu.CollapseAll}" Command="{Binding CollapseAllCommand}" Style="{StaticResource MiGroup}" />
+                                </ContextMenu>
+                            </c:TreeListView.ContextMenu>
+                        </c:TreeListView>
+                    </Grid>
+                </TabItem>
+
+                <!-- ================= KEYS ================= -->
+                <TabItem>
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8D7;" FontFamily="{StaticResource IconFont}" Margin="0,1,8,0" VerticalAlignment="Center" />
+                            <TextBlock Text="{l:Tr Tab.Keys}" />
                         </StackPanel>
-                        <TextBlock Style="{StaticResource Hint}" Text="{Binding HelperInfo}" Margin="0,10,0,0" />
+                    </TabItem.Header>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <WrapPanel Margin="0,0,0,10">
+                            <Button Content="{l:Tr Keys.Generate}" Command="{Binding GenerateKeyCommand}"
+                                    Style="{DynamicResource AccentButtonStyle}" Margin="0,0,6,0" Padding="14,5" />
+                            <Button Content="{l:Tr Keys.Import}" Command="{Binding ImportKeyCommand}" Style="{StaticResource ToolbarButton}" />
+                            <Button Content="{l:Tr Keys.CopyPublic}" Command="{Binding CopyPublicKeyCommand}" Style="{StaticResource ToolbarButton}" />
+                            <Button Content="{l:Tr Keys.ExportPrivate}" Command="{Binding ExportPrivateKeyCommand}" Style="{StaticResource ToolbarButton}" />
+                            <Button Content="{l:Tr Keys.Rename}" Command="{Binding RenameKeyCommand}" Style="{StaticResource ToolbarButton}" />
+                            <Button Content="{l:Tr Keys.Delete}" Command="{Binding DeleteKeyCommand}" Style="{StaticResource ToolbarButton}" />
+                        </WrapPanel>
+                        <DataGrid Grid.Row="1" x:Name="KeysGrid" ItemsSource="{Binding Keys}" SelectedItem="{Binding SelectedKey}"
+                                  AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
+                                  HeadersVisibility="Column" GridLinesVisibility="None" CanUserAddRows="False">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="{l:Tr Col.Name}" Binding="{Binding Name}" Width="190" MinWidth="80" />
+                                <DataGridTextColumn Header="{l:Tr Keys.Type}" Binding="{Binding Type}" Width="80" MinWidth="60" />
+                                <DataGridTextColumn Header="{l:Tr Keys.Fingerprint}" Binding="{Binding Fingerprint}" Width="330" MinWidth="120" />
+                                <DataGridTextColumn Header="{l:Tr Keys.Comment}" Binding="{Binding Comment}" Width="170" MinWidth="80" />
+                                <DataGridTextColumn Header="{l:Tr Keys.Created}" Binding="{Binding Created}" Width="95" MinWidth="70" />
+                                <DataGridTextColumn Header="{l:Tr Keys.Servers}" Binding="{Binding UsedBy}" Width="*" MinWidth="120" />
+                            </DataGrid.Columns>
+                            <DataGrid.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="{l:Tr Keys.CopyPublic}" Command="{Binding CopyPublicKeyCommand}" />
+                                    <MenuItem Header="{l:Tr Keys.ExportPrivate}" Command="{Binding ExportPrivateKeyCommand}" />
+                                    <MenuItem Header="{l:Tr Keys.Rename}" Command="{Binding RenameKeyCommand}" />
+                                    <Separator />
+                                    <MenuItem Header="{l:Tr Keys.Delete}" Command="{Binding DeleteKeyCommand}" />
+                                </ContextMenu>
+                            </DataGrid.ContextMenu>
+                        </DataGrid>
+                    </Grid>
+                </TabItem>
 
-                        <TextBlock Style="{StaticResource SectionHeader}" Text="Данные" />
-                        <TextBlock Text="{Binding DataDir}" TextWrapping="Wrap" />
-                        <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,0"
-                                   Text="vault.dat — зашифрованное хранилище, backups — его предыдущие версии, known_hosts — ключи серверов, pub — публичные ключи. Для резервной копии скопируйте всю папку data и помните мастер-пароль." />
-                        <Button Content="Открыть папку данных" HorizontalAlignment="Left" Margin="0,10,0,0"
-                                Command="{Binding DataContext.OpenDataFolderCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
-                    </StackPanel>
-                </ScrollViewer>
-            </TabItem>
-        </TabControl>
+                <!-- ================= SETTINGS ================= -->
+                <TabItem>
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE713;" FontFamily="{StaticResource IconFont}" Margin="0,1,8,0" VerticalAlignment="Center" />
+                            <TextBlock Text="{l:Tr Tab.Settings}" />
+                        </StackPanel>
+                    </TabItem.Header>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="4,0,16,16" MaxWidth="820" HorizontalAlignment="Left" DataContext="{Binding Settings}">
+                            <TextBlock Style="{StaticResource SectionHeader}" Text="{l:Tr Settings.Interface}" Margin="0,4,0,6" />
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{l:Tr Settings.Language}" VerticalAlignment="Center" />
+                                <ComboBox SelectedIndex="{Binding LanguageIndex}" Width="220" Margin="10,0,0,0">
+                                    <ComboBoxItem Content="{l:Tr Lang.System}" />
+                                    <ComboBoxItem Content="Русский" />
+                                    <ComboBoxItem Content="English" />
+                                </ComboBox>
+                            </StackPanel>
 
-        <!-- status bar -->
-        <DockPanel Grid.Row="1" Margin="2,8,0,0">
-            <Button DockPanel.Dock="Right" Content="🔒 Заблокировать" Command="{Binding LockCommand}" Padding="10,3" ToolTip="Ctrl+L" />
-            <TextBlock DockPanel.Dock="Right" Text="{Binding Summary}" VerticalAlignment="Center" Margin="0,0,16,0" Opacity="0.7" />
-            <StackPanel>
-                <TextBlock Text="{Binding AgentStatus}" Opacity="0.7" TextTrimming="CharacterEllipsis" />
-                <TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" />
-            </StackPanel>
-        </DockPanel>
-    </Grid>
+                            <TextBlock Style="{StaticResource SectionHeader}" Text="{l:Tr Settings.Startup}" />
+                            <CheckBox Content="{l:Tr Settings.AutostartBox}" IsChecked="{Binding Autostart}" />
+                            <CheckBox Content="{l:Tr Settings.CloseToTray}" IsChecked="{Binding CloseToTray}" Margin="0,8,0,0" />
+
+                            <TextBlock Style="{StaticResource SectionHeader}" Text="{l:Tr Settings.Security}" />
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{l:Tr Settings.AutoLock}" VerticalAlignment="Center" />
+                                <TextBox Width="70" Margin="10,0,0,0" Text="{Binding AutoLockMinutes, UpdateSourceTrigger=LostFocus}" />
+                            </StackPanel>
+                            <CheckBox Content="{l:Tr Settings.LockOnWinL}" IsChecked="{Binding LockOnWindowsLock}" Margin="0,8,0,0" />
+                            <CheckBox Content="{l:Tr Settings.UnlockOnAgent}" IsChecked="{Binding UnlockOnAgentRequest}" Margin="0,8,0,0" />
+                            <Button Content="{l:Tr Settings.ChangePassword}" HorizontalAlignment="Left" Margin="0,12,0,0"
+                                    Command="{Binding DataContext.ChangePasswordCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+
+                            <TextBlock Style="{StaticResource SectionHeader}" Text="{l:Tr Settings.Monitoring}" />
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{l:Tr Settings.MonitorInterval}" VerticalAlignment="Center" />
+                                <TextBox Width="70" Margin="10,0,0,0" Text="{Binding MonitorIntervalMinutes, UpdateSourceTrigger=LostFocus}" />
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource Hint}" Text="{l:Tr Settings.MonitorHint}" Margin="0,4,0,0" />
+                            <CheckBox Content="{l:Tr Settings.CollectMetrics}" IsChecked="{Binding CollectMetrics}" Margin="0,8,0,0" />
+                            <CheckBox Content="{l:Tr Settings.NotifyDown}" IsChecked="{Binding NotifyOnServerDown}" Margin="0,8,0,0" />
+                            <CheckBox Content="{l:Tr Settings.AutoInventory}" IsChecked="{Binding AutoInventory}" Margin="0,8,0,0" />
+                            <CheckBox Content="{l:Tr Settings.GeoIp}" IsChecked="{Binding GeoIpEnabled}" Margin="0,8,0,0" />
+                            <TextBlock Style="{StaticResource Hint}" Text="{l:Tr Settings.GeoIpHint}" Margin="0,4,0,0" />
+
+                            <TextBlock Style="{StaticResource SectionHeader}" Text="{l:Tr Settings.Scripts}" />
+                            <TextBlock Style="{StaticResource Hint}" Text="{l:Tr Settings.ScriptsHint}" />
+                            <Grid Margin="0,8,0,0" Height="380">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="260" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <DockPanel>
+                                    <WrapPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+                                        <Button Content="{l:Tr Scripts.Add}" Command="{Binding AddScriptCommand}" Style="{StaticResource ToolbarButton}" Padding="10,4" />
+                                        <Button Content="{l:Tr Scripts.Duplicate}" Command="{Binding DuplicateScriptCommand}" Style="{StaticResource ToolbarButton}" Padding="10,4" />
+                                        <Button Content="{l:Tr Scripts.Delete}" Command="{Binding DeleteScriptCommand}" Style="{StaticResource ToolbarButton}" Padding="10,4" />
+                                    </WrapPanel>
+                                    <ListBox ItemsSource="{Binding Scripts}" SelectedItem="{Binding SelectedScript}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Name}" />
+                                                    <TextBlock Text="{Binding OsFilter}" FontSize="11" Opacity="0.6" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </DockPanel>
+                                <DockPanel Grid.Column="2" IsEnabled="{Binding HasScript}">
+                                    <Grid DockPanel.Dock="Top">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="10" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Scripts.Name}" Margin="0,0,0,4" />
+                                            <TextBox Text="{Binding ScriptName, UpdateSourceTrigger=PropertyChanged}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Scripts.OsFilter}" Margin="0,0,0,4" />
+                                            <TextBox Text="{Binding ScriptOsFilter, UpdateSourceTrigger=PropertyChanged}" ToolTip="{l:Tr Scripts.OsFilterTip}" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <DockPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                                        <Button DockPanel.Dock="Right" Content="{l:Tr Scripts.Save}" Command="{Binding SaveScriptCommand}"
+                                                Style="{DynamicResource AccentButtonStyle}" MinWidth="110" />
+                                        <CheckBox Content="{l:Tr Scripts.UseSudo}" IsChecked="{Binding ScriptUseSudo}" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <TextBox Margin="0,8,0,0" Text="{Binding ScriptBody, UpdateSourceTrigger=PropertyChanged}"
+                                             AcceptsReturn="True" AcceptsTab="True" FontFamily="Cascadia Mono, Consolas" FontSize="12"
+                                             TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                             VerticalContentAlignment="Top" />
+                                </DockPanel>
+                            </Grid>
+
+                            <TextBlock Style="{StaticResource SectionHeader}" Text="{l:Tr Settings.Backup}" />
+                            <StackPanel Orientation="Horizontal">
+                                <RadioButton Content="{l:Tr Backup.ToFolder}" IsChecked="{Binding BackupToFolder}" GroupName="backup" Margin="0,0,24,0" />
+                                <RadioButton Content="{l:Tr Backup.ToServer}" IsChecked="{Binding BackupToSsh}" GroupName="backup" />
+                            </StackPanel>
+                            <Grid Margin="0,8,0,0">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding BackupToFolder}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Text="{Binding BackupFolder, UpdateSourceTrigger=LostFocus}" />
+                                <Button Grid.Column="1" Content="{l:Tr Backup.Browse}" Margin="6,0,0,0" Command="{Binding BrowseBackupFolderCommand}" />
+                            </Grid>
+                            <Grid Margin="0,8,0,0">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding BackupToSsh}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="10" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Backup.Server}" Margin="0,0,0,4" />
+                                    <ComboBox ItemsSource="{Binding BackupServers}" DisplayMemberPath="Name" SelectedValuePath="Id"
+                                              SelectedValue="{Binding BackupServerId}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Backup.RemotePath}" Margin="0,0,0,4" />
+                                    <TextBox Text="{Binding BackupRemotePath, UpdateSourceTrigger=LostFocus}" />
+                                </StackPanel>
+                            </Grid>
+                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                <TextBlock Text="{l:Tr Backup.Keep}" VerticalAlignment="Center" />
+                                <TextBox Width="60" Margin="10,0,24,0" Text="{Binding BackupKeep, UpdateSourceTrigger=LostFocus}" />
+                                <TextBlock Text="{l:Tr Backup.AutoHours}" VerticalAlignment="Center" />
+                                <TextBox Width="60" Margin="10,0,0,0" Text="{Binding BackupAutoHours, UpdateSourceTrigger=LostFocus}" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                <Button Content="{l:Tr Menu.BackupNow}" Command="{Binding BackupNowCommand}" Style="{DynamicResource AccentButtonStyle}" Padding="14,5" />
+                                <TextBlock Text="{Binding BackupLastResult}" Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0" />
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource Hint}" Text="{l:Tr Backup.Hint}" Margin="0,6,0,0" />
+
+                            <TextBlock Style="{StaticResource SectionHeader}" Text="{l:Tr Settings.Terminal}" />
+                            <ComboBox SelectedIndex="{Binding TerminalIndex}" Width="360" HorizontalAlignment="Left">
+                                <ComboBoxItem Content="{l:Tr Settings.WtTab}" />
+                                <ComboBoxItem Content="{l:Tr Settings.WtWindow}" />
+                                <ComboBoxItem Content="{l:Tr Settings.Console}" />
+                            </ComboBox>
+                            <TextBlock Style="{StaticResource Hint}" Text="{Binding TerminalInfo}" Margin="0,4,0,0" />
+                            <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Settings.WtProfile}" />
+                            <TextBox Width="360" HorizontalAlignment="Left" Text="{Binding WindowsTerminalProfile, UpdateSourceTrigger=LostFocus}" />
+                            <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Settings.SshPath}" />
+                            <TextBox Text="{Binding SshPath, UpdateSourceTrigger=LostFocus}" />
+                            <TextBlock Style="{StaticResource Hint}" Text="{Binding EffectiveSshPath}" Margin="0,4,0,0" />
+                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                <TextBlock Text="{l:Tr Settings.AliveInterval}" VerticalAlignment="Center" />
+                                <TextBox Width="70" Margin="10,0,0,0" Text="{Binding ServerAliveInterval, UpdateSourceTrigger=LostFocus}" />
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource Hint}" Text="{Binding HelperInfo}" Margin="0,10,0,0" />
+
+                            <TextBlock Style="{StaticResource SectionHeader}" Text="{l:Tr Settings.Data}" />
+                            <TextBlock Text="{Binding DataDir}" TextWrapping="Wrap" />
+                            <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,0" Text="{l:Tr Settings.DataHint}" />
+                            <Button Content="{l:Tr Menu.OpenDataFolder}" HorizontalAlignment="Left" Margin="0,10,0,0"
+                                    Command="{Binding DataContext.OpenDataFolderCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+            </TabControl>
+
+            <!-- status bar -->
+            <DockPanel Grid.Row="1" Margin="2,8,0,0">
+                <Button DockPanel.Dock="Right" Command="{Binding LockCommand}" Padding="10,3" ToolTip="Ctrl+L">
+                    <TextBlock><Run Text="🔒 " /><Run Text="{l:Tr Main.Lock}" /></TextBlock>
+                </Button>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding Summary}" VerticalAlignment="Center" Margin="0,0,16,0" Opacity="0.7" />
+                <StackPanel>
+                    <TextBlock Text="{Binding AgentStatus}" Opacity="0.7" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+            </DockPanel>
+        </Grid>
+    </DockPanel>
 </Window>

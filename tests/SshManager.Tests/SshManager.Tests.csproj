@@ -20,4 +20,8 @@
     <ProjectReference Include="..\..\src\sshm\sshm.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Using Include="SshManager.Core.Localization" />
+  </ItemGroup>
+
 </Project>

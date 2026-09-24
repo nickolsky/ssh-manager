@@ -1,31 +1,22 @@
 using System.Collections.ObjectModel;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Windows;
-using System.Windows.Data;
 using System.Windows.Input;
 using Microsoft.Win32;
 using SshManager.Core;
 using SshManager.Core.Crypto;
+using SshManager.Core.Inventory;
 using SshManager.Core.Models;
+using SshManager.Core.Monitoring;
+using SshManager.Core.Scripts;
 using SshManager.Core.Storage;
 using SshManager.Mvvm;
 using SshManager.Services;
 using SshManager.Views;
 
 namespace SshManager.ViewModels;
-
-public sealed class ServerRow(ServerEntry entry, string authText)
-{
-    public ServerEntry Entry { get; } = entry;
-    public string Name => Entry.Name;
-    public string GroupName => string.IsNullOrWhiteSpace(Entry.Group) ? "Без группы" : Entry.Group;
-    public string Address => Entry.Display;
-    public string AuthText { get; } = authText;
-    public string LastConnected => Entry.LastConnected?.ToString("dd.MM.yyyy HH:mm") ?? "—";
-    public string Notes => Entry.Notes ?? "";
-}
 
 public sealed class KeyRow(KeyEntry entry, string usedBy)
 {
@@ -35,26 +26,35 @@ public sealed class KeyRow(KeyEntry entry, string usedBy)
     public string Fingerprint => Entry.Fingerprint;
     public string Comment => Entry.Comment;
     public string UsedBy { get; } = usedBy;
-    public string Created => Entry.Created.ToString("dd.MM.yyyy");
+    public string Created => Entry.Created.ToString("d", L.Culture);
 }
 
-public sealed class MainViewModel : ObservableObject
+/// <summary>Entry of a dynamically built context submenu ("Install ▸").</summary>
+public sealed record MenuEntry(string Header, ICommand? Command = null, object? Parameter = null, bool Bold = false,
+    IReadOnlyList<MenuEntry>? Children = null)
+{
+    public bool Enabled => Command != null || Children is { Count: > 0 };
+}
+
+public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly AppHost _host;
-    private ServerRow? _selectedServer;
+    private readonly HashSet<Guid> _expandedServers = [];
+    private readonly Dictionary<Guid, ServerNode> _serverNodes = [];
+    private readonly List<GroupNode> _groupNodes = [];
+    private Dictionary<Guid, string> _keyNames = [];
+    private Dictionary<string, ServerEntry> _serversByIp = new(StringComparer.OrdinalIgnoreCase);
+    private TreeNode? _selectedNode;
     private KeyRow? _selectedKey;
     private string _search = "";
     private string _status = "";
     private bool _busy;
+    private bool _building;
+    private int _selectedTab;
 
     public MainViewModel(AppHost host)
     {
         _host = host;
-        ServersView = CollectionViewSource.GetDefaultView(Servers);
-        ServersView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(ServerRow.GroupName)));
-        ServersView.SortDescriptions.Add(new SortDescription(nameof(ServerRow.GroupName), ListSortDirection.Ascending));
-        ServersView.SortDescriptions.Add(new SortDescription(nameof(ServerRow.Name), ListSortDirection.Ascending));
-        ServersView.Filter = FilterServer;
 
         bool HasServer() => SelectedServer != null && !Busy;
         bool HasKey() => SelectedKey != null;
@@ -67,6 +67,28 @@ public sealed class MainViewModel : ObservableObject
         CopyCommandCommand = new RelayCommand(CopyCommand, HasServer);
         SetupKeyCommand = new RelayCommand(SetupKey, () => HasServer() && !string.IsNullOrEmpty(SelectedServer!.Entry.Password));
         TestCommand = new RelayCommand(Test, HasServer);
+        RefreshInfoCommand = new RelayCommand(() => _host.RefreshServer(SelectedServer!.Entry.Id), HasServer);
+        CheckNowCommand = new RelayCommand(() => _host.Health.CheckNow(SelectedServer!.Entry.Id), HasServer);
+        PortForwardsCommand = new RelayCommand(OpenPortForwards, HasServer);
+        RunScriptCommand = new RelayCommand(p => RunScript(p as ScriptEntry), _ => HasServer());
+        ContainerLogsCommand = new RelayCommand(() => QuickAction(n => n is ContainerNode c ? ScriptRunner.DockerLogs(n.Server!.Entry, c.Info.Name) : null, "docker logs"), () => SelectedNode is ContainerNode);
+        ContainerRestartCommand = new RelayCommand(() => QuickAction(n => n is ContainerNode c ? ScriptRunner.DockerRestart(n.Server!.Entry, c.Info.Name) : null, "docker restart"), () => SelectedNode is ContainerNode);
+        ServiceStatusCommand = new RelayCommand(() => QuickAction(n => n is ServiceNode s ? ScriptRunner.ServiceStatus(n.Server!.Entry, s.Info.Unit) : null, "systemctl status"), () => SelectedNode is ServiceNode);
+        ServiceLogsCommand = new RelayCommand(() => QuickAction(n => n is ServiceNode s ? ScriptRunner.ServiceLogs(n.Server!.Entry, s.Info.Unit) : null, "journalctl"), () => SelectedNode is ServiceNode);
+        ServiceRestartCommand = new RelayCommand(() => QuickAction(n => n is ServiceNode s ? ScriptRunner.ServiceRestart(n.Server!.Entry, s.Info.Unit) : null, "systemctl restart"), () => SelectedNode is ServiceNode);
+
+        ExpandAllCommand = new RelayCommand(() => SetAllExpanded(true));
+        CollapseAllCommand = new RelayCommand(() => SetAllExpanded(false));
+        RefreshAllCommand = new RelayCommand(() =>
+        {
+            _host.RefreshBackground(force: true);
+            Status = L.Get("Main.RefreshingAll");
+        });
+        BackupNowCommand = new RelayCommand(BackupNow);
+        SetLanguageCommand = new RelayCommand(p => _host.SetLanguage(p as string is "ru" or "en" ? (string)p : null));
+        AboutCommand = new RelayCommand(About);
+        ExitCommand = new RelayCommand(() => _host.Exit());
+        OpenScriptsSettingsCommand = new RelayCommand(() => SelectedTab = 2);
 
         GenerateKeyCommand = new RelayCommand(GenerateKey);
         ImportKeyCommand = new RelayCommand(ImportKey);
@@ -79,23 +101,49 @@ public sealed class MainViewModel : ObservableObject
         ChangePasswordCommand = new RelayCommand(() => new ChangePasswordWindow(_host.Vault) { Owner = Owner }.ShowDialog());
         OpenDataFolderCommand = new RelayCommand(() => Process.Start(new ProcessStartInfo(AppPaths.DataDir) { UseShellExecute = true }));
 
-        Settings = new SettingsViewModel(host);
-        _host.Vault.DataChanged += (_, _) => Application.Current.Dispatcher.BeginInvoke(Reload);
+        Settings = new SettingsViewModel(host, this);
+
+        _host.Vault.DataChanged += OnDataChanged;
+        _host.Vault.FactsChanged += OnFactsChanged;
+        _host.Inventory.RunningChanged += OnInventoryRunning;
+        _host.Health.HealthChanged += OnHealthChanged;
+        _host.Metrics.MetricsChanged += OnMetricsChanged;
+        L.LanguageChanged += OnLanguageChanged;
         Reload();
     }
 
     public Window? Owner { get; set; }
     public SettingsViewModel Settings { get; }
 
-    public ObservableCollection<ServerRow> Servers { get; } = [];
-    public ICollectionView ServersView { get; }
+    public ObservableCollection<TreeNode> Roots { get; } = [];
     public ObservableCollection<KeyRow> Keys { get; } = [];
+    public ObservableCollection<MenuEntry> InstallItems { get; } = [];
 
-    public ServerRow? SelectedServer
+    public TreeNode? SelectedNode
     {
-        get => _selectedServer;
-        set => Set(ref _selectedServer, value);
+        get => _selectedNode;
+        set
+        {
+            if (!Set(ref _selectedNode, value)) return;
+            OnPropertyChanged(nameof(SelectedServer));
+            OnPropertyChanged(nameof(SelectionKind));
+            CommandManager.InvalidateRequerySuggested();
+        }
     }
+
+    public ServerNode? SelectedServer => _selectedNode?.Server;
+
+    /// <summary>group, server, container, service, forward, other — drives context menu visibility.</summary>
+    public string SelectionKind => _selectedNode switch
+    {
+        ServerNode => "server",
+        ContainerNode => "container",
+        ServiceNode => "service",
+        ForwardNode => "forward",
+        GroupNode => "group",
+        null => "",
+        _ => "other",
+    };
 
     public KeyRow? SelectedKey
     {
@@ -103,12 +151,18 @@ public sealed class MainViewModel : ObservableObject
         set => Set(ref _selectedKey, value);
     }
 
+    public int SelectedTab
+    {
+        get => _selectedTab;
+        set => Set(ref _selectedTab, value);
+    }
+
     public string SearchText
     {
         get => _search;
         set
         {
-            if (Set(ref _search, value)) ServersView.Refresh();
+            if (Set(ref _search, value)) BuildTree();
         }
     }
 
@@ -130,12 +184,26 @@ public sealed class MainViewModel : ObservableObject
 
     public string AgentStatus => _host.Agent.PipeName switch
     {
-        null => "Агент не запущен (pipe занят другим приложением)",
-        var p when _host.Agent.UsesDefaultPipe => $"Агент: \\\\.\\pipe\\{p} — доступен для ssh, git, VS Code",
-        var p => $"Агент: \\\\.\\pipe\\{p} (стандартный pipe занят; для внешних клиентов задайте SSH_AUTH_SOCK)",
+        null => L.Get("Agent.NotRunning"),
+        var p when _host.Agent.UsesDefaultPipe => L.F("Agent.Default", p),
+        var p => L.F("Agent.Fallback", p),
     };
 
-    public string Summary => $"Серверов: {Servers.Count}   Ключей: {Keys.Count}";
+    public string Summary
+    {
+        get
+        {
+            var total = _serverNodes.Count;
+            var online = _serverNodes.Values.Count(n => n.Health.State == HealthState.Online);
+            var offline = _serverNodes.Values.Count(n => n.Health.State == HealthState.Offline);
+            return L.F("Main.Summary", _host.Vault.IsUnlocked ? _host.Vault.Data.Servers.Count : total, online, offline, Keys.Count);
+        }
+    }
+
+    public string? LanguageSetting => _host.SettingsStore.Settings.Language;
+    public bool IsLangSystem => LanguageSetting == null;
+    public bool IsLangRu => LanguageSetting == L.Russian;
+    public bool IsLangEn => LanguageSetting == L.English;
 
     public ICommand ConnectCommand { get; }
     public ICommand AddServerCommand { get; }
@@ -145,6 +213,23 @@ public sealed class MainViewModel : ObservableObject
     public ICommand CopyCommandCommand { get; }
     public ICommand SetupKeyCommand { get; }
     public ICommand TestCommand { get; }
+    public ICommand RefreshInfoCommand { get; }
+    public ICommand CheckNowCommand { get; }
+    public ICommand PortForwardsCommand { get; }
+    public ICommand RunScriptCommand { get; }
+    public ICommand ContainerLogsCommand { get; }
+    public ICommand ContainerRestartCommand { get; }
+    public ICommand ServiceStatusCommand { get; }
+    public ICommand ServiceLogsCommand { get; }
+    public ICommand ServiceRestartCommand { get; }
+    public ICommand ExpandAllCommand { get; }
+    public ICommand CollapseAllCommand { get; }
+    public ICommand RefreshAllCommand { get; }
+    public ICommand BackupNowCommand { get; }
+    public ICommand SetLanguageCommand { get; }
+    public ICommand AboutCommand { get; }
+    public ICommand ExitCommand { get; }
+    public ICommand OpenScriptsSettingsCommand { get; }
     public ICommand GenerateKeyCommand { get; }
     public ICommand ImportKeyCommand { get; }
     public ICommand CopyPublicKeyCommand { get; }
@@ -155,22 +240,72 @@ public sealed class MainViewModel : ObservableObject
     public ICommand ChangePasswordCommand { get; }
     public ICommand OpenDataFolderCommand { get; }
 
+    // ---------- events from services (any thread) ----------
+
+    private void Ui(Action a) => Application.Current?.Dispatcher.BeginInvoke(a);
+
+    private void OnDataChanged(object? s, EventArgs e) => Ui(Reload);
+
+    private void OnFactsChanged(object? s, Guid id) => Ui(() =>
+    {
+        if (!_host.Vault.IsUnlocked) return;
+        var entry = _host.Vault.Data.Servers.FirstOrDefault(x => x.Id == id);
+        if (entry == null) return;
+        RebuildIpMap();
+        if (_serverNodes.TryGetValue(id, out var node)) node.Update(entry);
+        foreach (var n in _serverNodes.Values) n.RaiseForwardsChanged();
+    });
+
+    private void OnInventoryRunning(object? s, Guid id) => Ui(() =>
+    {
+        if (_serverNodes.TryGetValue(id, out var node)) node.SetLoading(_host.Inventory.IsRunning(id));
+    });
+
+    private void OnHealthChanged(object? s, Guid id) => Ui(() =>
+    {
+        if (!_serverNodes.TryGetValue(id, out var node)) return;
+        node.SetHealth(_host.Health.Get(id));
+        UpdateGroupCounts();
+        OnPropertyChanged(nameof(Summary));
+    });
+
+    private void OnMetricsChanged(object? s, Guid id) => Ui(() =>
+    {
+        if (_serverNodes.TryGetValue(id, out var node)) node.SetMetrics(_host.Metrics.Get(id));
+    });
+
+    private void OnLanguageChanged(object? s, EventArgs e) => Ui(() =>
+    {
+        Reload();
+        OnPropertyChanged(nameof(AgentStatus));
+        OnPropertyChanged(nameof(LanguageSetting));
+        OnPropertyChanged(nameof(IsLangSystem));
+        OnPropertyChanged(nameof(IsLangRu));
+        OnPropertyChanged(nameof(IsLangEn));
+        Status = "";
+        Settings.RefreshTexts();
+    });
+
+    public void Dispose()
+    {
+        _host.Vault.DataChanged -= OnDataChanged;
+        _host.Vault.FactsChanged -= OnFactsChanged;
+        _host.Inventory.RunningChanged -= OnInventoryRunning;
+        _host.Health.HealthChanged -= OnHealthChanged;
+        _host.Metrics.MetricsChanged -= OnMetricsChanged;
+        L.LanguageChanged -= OnLanguageChanged;
+        Settings.Dispose();
+    }
+
+    // ---------- tree ----------
+
     public void Reload()
     {
         if (!_host.Vault.IsUnlocked) return;
         var data = _host.Vault.Data;
-        var selectedServer = SelectedServer?.Entry.Id;
         var selectedKey = SelectedKey?.Entry.Id;
-        var keysById = data.Keys.ToDictionary(k => k.Id);
-
-        Servers.Clear();
-        foreach (var s in data.Servers)
-        {
-            var auth = s.Auth == AuthMode.Key
-                ? "🔑 " + (s.KeyId is { } id && keysById.TryGetValue(id, out var k) ? k.Name : "ключ не найден")
-                : "Пароль";
-            Servers.Add(new ServerRow(s, auth));
-        }
+        _keyNames = data.Keys.ToDictionary(k => k.Id, k => k.Name);
+        RebuildIpMap();
 
         Keys.Clear();
         foreach (var k in data.Keys.OrderBy(k => k.Name))
@@ -178,23 +313,216 @@ public sealed class MainViewModel : ObservableObject
             var used = data.Servers.Where(s => s.KeyId == k.Id && s.Auth == AuthMode.Key).Select(s => s.Name).ToList();
             Keys.Add(new KeyRow(k, used.Count == 0 ? "—" : string.Join(", ", used)));
         }
-
-        SelectedServer = Servers.FirstOrDefault(r => r.Entry.Id == selectedServer);
         SelectedKey = Keys.FirstOrDefault(r => r.Entry.Id == selectedKey);
-        OnPropertyChanged(nameof(Summary));
+
+        BuildTree();
+        Settings.OnVaultChanged();
         OnPropertyChanged(nameof(AgentStatus));
     }
 
-    private bool FilterServer(object o)
+    private void RebuildIpMap()
+    {
+        var map = new Dictionary<string, ServerEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in _host.Vault.Data.Servers)
+        {
+            if (IPAddress.TryParse(s.Host, out _)) map.TryAdd(s.Host, s);
+            if (s.Facts?.Geo?.Ip is { Length: > 0 } ip) map.TryAdd(ip, s);
+        }
+        _serversByIp = map;
+    }
+
+    public static string[] SplitGroup(string? group) =>
+        (group ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private void BuildTree()
+    {
+        if (!_host.Vault.IsUnlocked) return;
+        var selectedId = SelectedServer?.Entry.Id;
+        var selectedWasServer = SelectedNode is ServerNode;
+        var searching = !string.IsNullOrWhiteSpace(_search);
+        var collapsed = _host.SettingsStore.Settings.CollapsedGroups.ToHashSet(StringComparer.CurrentCultureIgnoreCase);
+
+        _building = true;
+        try
+        {
+            Roots.Clear();
+            _serverNodes.Clear();
+            _groupNodes.Clear();
+            var groups = new Dictionary<string, GroupNode>(StringComparer.CurrentCultureIgnoreCase);
+
+            GroupNode? Group(string[] parts)
+            {
+                GroupNode? parent = null;
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    var path = string.Join("/", parts.Take(i + 1));
+                    if (!groups.TryGetValue(path, out var g))
+                    {
+                        g = new GroupNode(i, path, parts[i], OnGroupExpanded) { Parent = parent, Silent = true };
+                        g.IsExpanded = searching || !collapsed.Contains(path);
+                        g.Silent = false;
+                        groups[path] = g;
+                        _groupNodes.Add(g);
+                        (parent?.Children ?? Roots).Add(g);
+                    }
+                    parent = g;
+                }
+                return parent;
+            }
+
+            foreach (var s in _host.Vault.Data.Servers.Where(Matches))
+            {
+                var parts = SplitGroup(s.Group);
+                var parent = Group(parts);
+                var node = new ServerNode(this, parts.Length, s, parent);
+                node.SetHealth(_host.Health.Get(s.Id));
+                node.SetMetrics(_host.Metrics.Get(s.Id));
+                node.SetLoading(_host.Inventory.IsRunning(s.Id));
+                node.IsExpanded = _expandedServers.Contains(s.Id);
+                _serverNodes[s.Id] = node;
+                (parent?.Children ?? Roots).Add(node);
+            }
+
+            Sort(Roots);
+            UpdateGroupCounts();
+        }
+        finally
+        {
+            _building = false;
+        }
+
+        if (selectedId is { } id && _serverNodes.TryGetValue(id, out var sel))
+        {
+            if (selectedWasServer || SelectedNode == null) sel.IsSelected = true;
+        }
+        else if (SelectedNode != null && !Contains(SelectedNode))
+        {
+            SelectedNode = null;
+        }
+        OnPropertyChanged(nameof(Summary));
+    }
+
+    private bool Contains(TreeNode node) => node.Server is { } s && _serverNodes.ContainsValue(s);
+
+    private static void Sort(ObservableCollection<TreeNode> items)
+    {
+        var ordered = items.OrderBy(n => n is GroupNode ? 0 : 1)
+            .ThenBy(n => n.Title, StringComparer.CurrentCultureIgnoreCase).ToList();
+        items.Clear();
+        foreach (var n in ordered)
+        {
+            items.Add(n);
+            if (n is GroupNode) Sort(n.Children);
+        }
+    }
+
+    private void UpdateGroupCounts()
+    {
+        foreach (var g in _groupNodes)
+        {
+            var servers = Descendants(g).OfType<ServerNode>().ToList();
+            g.ServerCount = servers.Count;
+            g.OfflineCount = servers.Count(s => s.Health.State == HealthState.Offline);
+            g.Refresh();
+        }
+    }
+
+    private static IEnumerable<TreeNode> Descendants(TreeNode n)
+    {
+        foreach (var c in n.Children)
+        {
+            yield return c;
+            if (c is GroupNode)
+                foreach (var d in Descendants(c)) yield return d;
+        }
+    }
+
+    private bool Matches(ServerEntry s)
     {
         if (string.IsNullOrWhiteSpace(_search)) return true;
-        var r = (ServerRow)o;
         var q = _search.Trim();
-        return r.Name.Contains(q, StringComparison.CurrentCultureIgnoreCase) ||
-               r.Entry.Host.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-               r.Entry.Username.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-               r.GroupName.Contains(q, StringComparison.CurrentCultureIgnoreCase) ||
-               r.Notes.Contains(q, StringComparison.CurrentCultureIgnoreCase);
+        return s.Name.Contains(q, StringComparison.CurrentCultureIgnoreCase) ||
+               s.Host.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+               s.Username.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+               (s.Group ?? "").Contains(q, StringComparison.CurrentCultureIgnoreCase) ||
+               (s.Notes ?? "").Contains(q, StringComparison.CurrentCultureIgnoreCase) ||
+               (s.Facts?.OsLabel ?? "").Contains(q, StringComparison.CurrentCultureIgnoreCase) ||
+               (s.Facts?.Geo?.Label ?? "").Contains(q, StringComparison.CurrentCultureIgnoreCase) ||
+               (s.Facts?.Containers.Any(c => c.Name.Contains(q, StringComparison.OrdinalIgnoreCase)) ?? false);
+    }
+
+    private void OnGroupExpanded(GroupNode g)
+    {
+        if (_building || !string.IsNullOrWhiteSpace(_search)) return;
+        var list = _host.SettingsStore.Settings.CollapsedGroups;
+        list.RemoveAll(p => string.Equals(p, g.Path, StringComparison.CurrentCultureIgnoreCase));
+        if (!g.IsExpanded) list.Add(g.Path);
+        _host.SettingsStore.Save();
+    }
+
+    public void OnServerExpanded(ServerNode node)
+    {
+        if (node.IsExpanded) _expandedServers.Add(node.Entry.Id);
+        else _expandedServers.Remove(node.Entry.Id);
+        if (_building || !node.IsExpanded) return;
+        if (_host.Inventory.NeedsRefresh(node.Entry)) _ = _host.Inventory.RefreshAsync(node.Entry.Id, interactive: true);
+    }
+
+    private void SetAllExpanded(bool expanded)
+    {
+        foreach (var g in _groupNodes) g.IsExpanded = expanded;
+        if (!expanded)
+            foreach (var s in _serverNodes.Values) s.IsExpanded = false;
+    }
+
+    // ---------- helpers for nodes ----------
+
+    public string KeyName(Guid? id) => id is { } k && _keyNames.TryGetValue(k, out var n) ? n : L.Get("Auth.KeyMissing");
+
+    public string TargetName(string ip) => _serversByIp.TryGetValue(ip, out var s) ? s.Name : ip;
+
+    public string DescribeForward(PortForward p) =>
+        $"{p.Protocol} {p.ListenPort} → {TargetName(p.TargetIp)}:{p.EffectiveTargetPort}";
+
+    public IEnumerable<(ServerEntry From, PortForward Forward)> IncomingForwards(ServerEntry target)
+    {
+        if (!_host.Vault.IsUnlocked) yield break;
+        foreach (var s in _host.Vault.Data.Servers)
+        {
+            if (s.Id == target.Id || s.Facts == null) continue;
+            foreach (var f in s.Facts.Forwards)
+                if (_serversByIp.TryGetValue(f.TargetIp, out var t) && t.Id == target.Id)
+                    yield return (s, f);
+        }
+    }
+
+    public IEnumerable<string> ForwardSummary(ServerEntry s)
+    {
+        foreach (var f in s.Facts?.Forwards ?? []) yield return DescribeForward(f);
+        foreach (var (from, f) in IncomingForwards(s)) yield return $"← {from.Name} ({f.Protocol} {f.ListenPort})";
+    }
+
+    /// <summary>Fills "Install ▸" for the selected server: scripts for its OS first, the rest under "Other".</summary>
+    public void PrepareContextMenu()
+    {
+        InstallItems.Clear();
+        var server = SelectedServer?.Entry;
+        var scripts = _host.Vault.IsUnlocked ? _host.Vault.Data.Scripts.OrderBy(s => s.Name, StringComparer.CurrentCultureIgnoreCase).ToList() : [];
+        if (scripts.Count == 0)
+        {
+            InstallItems.Add(new MenuEntry(L.Get("Scripts.NoneMenu"), OpenScriptsSettingsCommand));
+            return;
+        }
+        var matching = scripts.Where(s => s.Matches(server?.Facts)).ToList();
+        var other = scripts.Except(matching).ToList();
+        foreach (var s in matching)
+            InstallItems.Add(new MenuEntry(s.Name, RunScriptCommand, s, Bold: !string.IsNullOrWhiteSpace(s.OsFilter)));
+        if (other.Count > 0)
+        {
+            var children = other.Select(s => new MenuEntry($"{s.Name}  ({s.OsFilter})", RunScriptCommand, s)).ToList();
+            if (matching.Count == 0) foreach (var c in children) InstallItems.Add(c);
+            else InstallItems.Add(new MenuEntry(L.Get("Scripts.OtherOs"), Children: children));
+        }
     }
 
     // ---------- servers ----------
@@ -202,23 +530,34 @@ public sealed class MainViewModel : ObservableObject
     public void Connect()
     {
         if (SelectedServer == null) return;
+        var s = SelectedServer.Entry;
         try
         {
-            _host.Launcher.Launch(SelectedServer.Entry);
-            Status = $"Открыта сессия: {SelectedServer.Name}";
+            _host.Launch(s);
+            Status = L.F("Main.SessionOpened", s.Name);
         }
         catch (Exception ex)
         {
-            Warn("Не удалось открыть сессию", ex.Message);
+            Warn(L.Get("Main.SessionFailed"), ex.Message);
         }
     }
 
     private void AddServer()
     {
-        var entry = new ServerEntry { Group = SelectedServer?.Entry.Group ?? "" };
+        var group = SelectedNode is GroupNode g ? g.Path : SelectedServer?.Entry.Group ?? "";
+        var entry = new ServerEntry { Group = group };
         if (new ServerEditorWindow(_host, entry, isNew: true) { Owner = Owner }.ShowDialog() != true) return;
         _host.Vault.Update(d => d.Servers.Add(entry));
-        SelectedServer = Servers.FirstOrDefault(r => r.Entry.Id == entry.Id);
+        Select(entry.Id);
+        _ = _host.Geo.RefreshAsync(entry.Id);
+        _host.Health.CheckNow(entry.Id);
+    }
+
+    private void Select(Guid id)
+    {
+        if (!_serverNodes.TryGetValue(id, out var node)) return;
+        for (var p = node.Parent; p != null; p = p.Parent) p.IsExpanded = true;
+        node.IsSelected = true;
     }
 
     private void EditServer()
@@ -229,8 +568,14 @@ public sealed class MainViewModel : ObservableObject
         _host.Vault.Update(d =>
         {
             var i = d.Servers.FindIndex(s => s.Id == copy.Id);
-            if (i >= 0) d.Servers[i] = copy;
+            if (i < 0) return;
+            var hostChanged = d.Servers[i].Host != copy.Host;
+            copy.Facts = d.Servers[i].Facts; // collected in the meantime
+            if (hostChanged && copy.Facts != null) copy.Facts.Geo = null;
+            d.Servers[i] = copy;
         });
+        _ = _host.Geo.RefreshAsync(copy.Id);
+        _host.Health.CheckNow(copy.Id);
     }
 
     private void DuplicateServer()
@@ -238,25 +583,30 @@ public sealed class MainViewModel : ObservableObject
         if (SelectedServer == null) return;
         var copy = SelectedServer.Entry.Clone();
         copy.Id = Guid.NewGuid();
-        copy.Name += " (копия)";
+        copy.Name += L.Get("Main.CopySuffix");
         copy.LastConnected = null;
+        copy.Facts = null;
         if (new ServerEditorWindow(_host, copy, isNew: true) { Owner = Owner }.ShowDialog() != true) return;
         _host.Vault.Update(d => d.Servers.Add(copy));
+        Select(copy.Id);
     }
 
     private void DeleteServer()
     {
         if (SelectedServer == null) return;
         var s = SelectedServer.Entry;
-        if (!Confirm($"Удалить сервер «{s.Name}» ({s.Display})?\nКлючи останутся в хранилище.")) return;
+        if (!Confirm(L.F("Main.DeleteServerConfirm", s.Name, s.Display))) return;
+        _expandedServers.Remove(s.Id);
         _host.Vault.Update(d => d.Servers.RemoveAll(x => x.Id == s.Id));
     }
+
+    public bool CanDelete => DeleteServerCommand.CanExecute(null) && SelectedNode is ServerNode;
 
     private void CopyCommand()
     {
         if (SelectedServer == null) return;
         Clipboard.SetText(_host.Launcher.CommandLine(SelectedServer.Entry));
-        Status = "Команда ssh скопирована в буфер обмена";
+        Status = L.Get("Main.CommandCopied");
     }
 
     private void SetupKey()
@@ -270,23 +620,97 @@ public sealed class MainViewModel : ObservableObject
         if (SelectedServer == null) return;
         var s = SelectedServer.Entry.Clone();
         Busy = true;
-        Status = $"Проверка подключения к {s.Name}…";
+        Status = L.F("Main.Testing", s.Name);
         try
         {
             var result = await Task.Run(() => _host.KeySetup.Test(s));
-            Status = $"{s.Name}: подключение успешно";
-            MessageBox.Show(Owner!, $"Подключение к {s.Display} успешно.\n\n{result}", "Проверка подключения",
+            Status = L.F("Main.TestOkStatus", s.Name);
+            _host.Health.CheckNow(s.Id);
+            if (s.Facts?.OsId == null && ServerInventoryService.Supported(s)) _ = _host.Inventory.RefreshAsync(s.Id);
+            MessageBox.Show(Owner!, L.F("Main.TestOk", s.Display, result), L.Get("Main.TestTitle"),
                 MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            Status = $"{s.Name}: ошибка подключения";
-            Warn("Проверка подключения", $"Не удалось подключиться к {s.Display}:\n\n{ex.Message}");
+            Status = L.F("Main.TestFailedStatus", s.Name);
+            Warn(L.Get("Main.TestTitle"), L.F("Main.TestFailed", s.Display, ex.Message));
         }
         finally
         {
             Busy = false;
         }
+    }
+
+    private void OpenPortForwards()
+    {
+        if (SelectedServer == null) return;
+        new PortForwardWindow(_host, SelectedServer.Entry.Clone(), this) { Owner = Owner }.Show();
+    }
+
+    private async void RunScript(ScriptEntry? script)
+    {
+        if (script == null || SelectedServer == null) return;
+        var server = SelectedServer.Entry.Clone();
+        if (!Confirm(L.F("Scripts.RunConfirm", script.Name, server.Name, server.Display))) return;
+        Busy = true;
+        Status = L.F("Scripts.Uploading", script.Name, server.Name);
+        try
+        {
+            var command = await Task.Run(() => _host.Scripts.Prepare(server, script));
+            _host.Scripts.Launch(server, command, script.Name);
+            Status = L.F("Scripts.Started", script.Name, server.Name);
+        }
+        catch (Exception ex)
+        {
+            Status = "";
+            Warn(L.Get("Scripts.Title"), ex.Message);
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    private void QuickAction(Func<TreeNode, string?> build, string title)
+    {
+        if (SelectedNode is not { Server: { } server } node || build(node) is not { } command) return;
+        try
+        {
+            _host.Scripts.Launch(server.Entry, command, $"{title} {node.Title}");
+        }
+        catch (Exception ex)
+        {
+            Warn(L.Get("Main.SessionFailed"), ex.Message);
+        }
+    }
+
+    private async void BackupNow()
+    {
+        if (!_host.Backup.IsConfigured)
+        {
+            Warn(L.Get("Backup.Title"), L.Get("Backup.NotConfigured"));
+            SelectedTab = 2;
+            return;
+        }
+        Status = L.Get("Backup.Running");
+        try
+        {
+            var where = await _host.Backup.RunAsync();
+            Status = L.F("Backup.Done", where);
+        }
+        catch (Exception ex)
+        {
+            Status = "";
+            Warn(L.Get("Backup.Title"), ex.Message);
+        }
+        Settings.RefreshBackup();
+    }
+
+    private void About()
+    {
+        var version = typeof(App).Assembly.GetName().Version?.ToString(3);
+        MessageBox.Show(Owner!, L.F("About.Text", version, AppPaths.DataDir), L.Get("About.Title"),
+            MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     // ---------- keys ----------
@@ -299,15 +723,15 @@ public sealed class MainViewModel : ObservableObject
         _host.Vault.Update(d => d.Keys.Add(key));
         KeyService.EnsurePublicKeyFile(key);
         SelectedKey = Keys.FirstOrDefault(k => k.Entry.Id == key.Id);
-        Status = $"Ключ «{key.Name}» создан";
+        Status = L.F("Keys.CreatedStatus", key.Name);
     }
 
     private void ImportKey()
     {
         var ofd = new OpenFileDialog
         {
-            Title = "Импорт приватного ключа",
-            Filter = "Все файлы|*.*|PuTTY (*.ppk)|*.ppk|PEM (*.pem;*.key)|*.pem;*.key",
+            Title = L.Get("Keys.ImportTitle"),
+            Filter = L.Get("Keys.ImportFilter"),
             InitialDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh"),
         };
         if (ofd.ShowDialog(Owner) != true) return;
@@ -318,7 +742,7 @@ public sealed class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            Warn("Импорт ключа", ex.Message);
+            Warn(L.Get("Keys.ImportTitle"), ex.Message);
             return;
         }
         var name = Path.GetFileNameWithoutExtension(ofd.FileName);
@@ -330,30 +754,29 @@ public sealed class MainViewModel : ObservableObject
                 var key = KeyService.Import(text, name, passphrase);
                 if (_host.Vault.Data.Keys.Any(k => k.Fingerprint == key.Fingerprint))
                 {
-                    Warn("Импорт ключа", "Этот ключ уже есть в хранилище.");
+                    Warn(L.Get("Keys.ImportTitle"), L.Get("Keys.AlreadyExists"));
                     return;
                 }
                 _host.Vault.Update(d => d.Keys.Add(key));
                 KeyService.EnsurePublicKeyFile(key);
-                Status = $"Ключ «{name}» импортирован ({key.Fingerprint})";
+                Status = L.F("Keys.Imported", name, key.Fingerprint);
                 return;
             }
             catch (EncryptedKeyException)
             {
-                passphrase = InputDialog.Ask(Owner, "Импорт ключа",
-                    passphrase == null ? "Ключ защищён паролем. Введите passphrase:" : "Неверная passphrase. Попробуйте ещё раз:",
-                    password: true);
+                passphrase = InputDialog.Ask(Owner, L.Get("Keys.ImportTitle"),
+                    L.Get(passphrase == null ? "Keys.AskPassphrase" : "Keys.WrongPassphrase"), password: true);
                 if (passphrase == null) return;
             }
             catch (Exception ex)
             {
                 if (passphrase != null && ex.Message.Contains("passphrase", StringComparison.OrdinalIgnoreCase))
                 {
-                    passphrase = InputDialog.Ask(Owner, "Импорт ключа", "Неверная passphrase. Попробуйте ещё раз:", password: true);
+                    passphrase = InputDialog.Ask(Owner, L.Get("Keys.ImportTitle"), L.Get("Keys.WrongPassphrase"), password: true);
                     if (passphrase == null) return;
                     continue;
                 }
-                Warn("Импорт ключа", "Не удалось прочитать ключ: " + ex.Message);
+                Warn(L.Get("Keys.ImportTitle"), L.Get("Keys.ReadFailed") + " " + ex.Message);
                 return;
             }
         }
@@ -363,31 +786,30 @@ public sealed class MainViewModel : ObservableObject
     {
         if (SelectedKey == null) return;
         Clipboard.SetText(SelectedKey.Entry.PublicKey);
-        Status = "Публичный ключ скопирован в буфер обмена";
+        Status = L.Get("Keys.PublicCopied");
     }
 
     private void ExportPrivateKey()
     {
         if (SelectedKey == null) return;
-        if (!Confirm("Приватный ключ будет сохранён в файл БЕЗ шифрования.\nХраните этот файл в надёжном месте. Продолжить?"))
-            return;
+        if (!Confirm(L.Get("Keys.ExportWarning"))) return;
         var sfd = new SaveFileDialog
         {
-            Title = "Экспорт приватного ключа",
+            Title = L.Get("Keys.ExportTitle"),
             FileName = "id_" + KeyService.SanitizeComment(SelectedKey.Name.Replace('@', '_')),
             Filter = "OpenSSH private key|*.*",
         };
         if (sfd.ShowDialog(Owner) != true) return;
         FileAcl.WritePrivate(sfd.FileName, SelectedKey.Entry.PrivateKey);
         File.WriteAllText(sfd.FileName + ".pub", SelectedKey.Entry.PublicKey + "\n");
-        Status = $"Ключ сохранён: {sfd.FileName}";
+        Status = L.F("Keys.Saved", sfd.FileName);
     }
 
     private void RenameKey()
     {
         if (SelectedKey == null) return;
         var id = SelectedKey.Entry.Id;
-        var name = InputDialog.Ask(Owner, "Переименовать ключ", "Новое название:", SelectedKey.Name);
+        var name = InputDialog.Ask(Owner, L.Get("Keys.RenameTitle"), L.Get("Keys.NewName"), SelectedKey.Name);
         if (string.IsNullOrWhiteSpace(name)) return;
         _host.Vault.Update(d => d.Keys.First(k => k.Id == id).Name = name.Trim());
     }
@@ -399,11 +821,10 @@ public sealed class MainViewModel : ObservableObject
         var users = _host.Vault.Data.Servers.Where(s => s.KeyId == key.Id && s.Auth == AuthMode.Key).Select(s => s.Name).ToList();
         if (users.Count > 0)
         {
-            Warn("Удаление ключа", "Ключ используется серверами:\n" + string.Join("\n", users) +
-                                   "\n\nСначала переключите их на другой ключ или пароль.");
+            Warn(L.Get("Keys.DeleteTitle"), L.F("Keys.InUse", string.Join("\n", users)));
             return;
         }
-        if (!Confirm($"Удалить ключ «{key.Name}»?\n{key.Fingerprint}\n\nЕсли у вас нет копии, восстановить его будет невозможно.")) return;
+        if (!Confirm(L.F("Keys.DeleteConfirm", key.Name, key.Fingerprint))) return;
         _host.Vault.Update(d =>
         {
             d.Keys.RemoveAll(k => k.Id == key.Id);
@@ -415,10 +836,10 @@ public sealed class MainViewModel : ObservableObject
 
     // ---------- helpers ----------
 
-    private bool Confirm(string text) =>
+    public bool Confirm(string text) =>
         MessageBox.Show(Owner!, text, "SSH Manager", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) ==
         MessageBoxResult.Yes;
 
-    private void Warn(string title, string text) =>
+    public void Warn(string title, string text) =>
         MessageBox.Show(Owner!, text, title, MessageBoxButton.OK, MessageBoxImage.Warning);
 }

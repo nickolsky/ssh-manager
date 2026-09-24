@@ -17,10 +17,10 @@ public partial class UnlockWindow : Window
         Icon = IconFactory.CreateImage(false);
         if (create)
         {
-            Header.Text = "Создание хранилища";
-            Subtitle.Text = "Придумайте мастер-пароль. Им шифруются все пароли серверов и приватные ключи в папке data.";
+            Header.Text = L.Get("Unlock.CreateHeader");
+            Subtitle.Text = L.Get("Unlock.CreateSubtitle");
             CreatePanel.Visibility = Visibility.Visible;
-            OkButton.Content = "Создать";
+            OkButton.Content = L.Get("Unlock.Create");
         }
         Loaded += (_, _) =>
         {
@@ -38,12 +38,12 @@ public partial class UnlockWindow : Window
         {
             if (pwd.Length < 8)
             {
-                ShowError("Пароль должен быть не короче 8 символов.");
+                ShowError(L.Get("Unlock.TooShort"));
                 return;
             }
             if (pwd != Confirm.Password)
             {
-                ShowError("Пароли не совпадают.");
+                ShowError(L.Get("Unlock.Mismatch"));
                 return;
             }
         }

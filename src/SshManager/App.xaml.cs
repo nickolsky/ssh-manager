@@ -42,7 +42,7 @@ public partial class App : Application
 
     private static void OnUnhandled(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
-        MessageBox.Show(e.Exception.Message, "SSH Manager — ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+        MessageBox.Show(e.Exception.Message, L.Get("App.ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
         e.Handled = true;
     }
 
