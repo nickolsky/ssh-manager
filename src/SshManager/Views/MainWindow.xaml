@@ -57,11 +57,13 @@
                             </GroupStyle>
                         </DataGrid.GroupStyle>
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Название" Binding="{Binding Name}" Width="2*" />
-                            <DataGridTextColumn Header="Адрес" Binding="{Binding Address}" Width="2*" />
-                            <DataGridTextColumn Header="Вход" Binding="{Binding AuthText}" Width="1.5*" />
-                            <DataGridTextColumn Header="Последнее подключение" Binding="{Binding LastConnected}" Width="1.3*" />
-                            <DataGridTextColumn Header="Заметки" Binding="{Binding Notes}" Width="2*" />
+                            <!-- Pixel widths: star widths collapse on first show in a grouped DataGrid.
+                                 The last column fills the rest; user-resized widths are saved in settings. -->
+                            <DataGridTextColumn Header="Название" Binding="{Binding Name}" Width="220" MinWidth="80" />
+                            <DataGridTextColumn Header="Адрес" Binding="{Binding Address}" Width="220" MinWidth="80" />
+                            <DataGridTextColumn Header="Вход" Binding="{Binding AuthText}" Width="170" MinWidth="70" />
+                            <DataGridTextColumn Header="Последнее подключение" Binding="{Binding LastConnected}" Width="170" MinWidth="80" />
+                            <DataGridTextColumn Header="Заметки" Binding="{Binding Notes}" Width="*" MinWidth="120" />
                         </DataGrid.Columns>
                         <DataGrid.ContextMenu>
                             <ContextMenu>
@@ -97,16 +99,16 @@
                         <Button Content="Переименовать" Command="{Binding RenameKeyCommand}" Style="{StaticResource ToolbarButton}" />
                         <Button Content="Удалить" Command="{Binding DeleteKeyCommand}" Style="{StaticResource ToolbarButton}" />
                     </WrapPanel>
-                    <DataGrid Grid.Row="1" ItemsSource="{Binding Keys}" SelectedItem="{Binding SelectedKey}"
+                    <DataGrid Grid.Row="1" x:Name="KeysGrid" ItemsSource="{Binding Keys}" SelectedItem="{Binding SelectedKey}"
                               AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
                               HeadersVisibility="Column" GridLinesVisibility="None" CanUserAddRows="False">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Название" Binding="{Binding Name}" Width="1.5*" />
-                            <DataGridTextColumn Header="Тип" Binding="{Binding Type}" Width="80" />
-                            <DataGridTextColumn Header="Отпечаток" Binding="{Binding Fingerprint}" Width="2.4*" />
-                            <DataGridTextColumn Header="Комментарий" Binding="{Binding Comment}" Width="1.3*" />
-                            <DataGridTextColumn Header="Серверы" Binding="{Binding UsedBy}" Width="1.5*" />
-                            <DataGridTextColumn Header="Создан" Binding="{Binding Created}" Width="90" />
+                            <DataGridTextColumn Header="Название" Binding="{Binding Name}" Width="190" MinWidth="80" />
+                            <DataGridTextColumn Header="Тип" Binding="{Binding Type}" Width="80" MinWidth="60" />
+                            <DataGridTextColumn Header="Отпечаток" Binding="{Binding Fingerprint}" Width="330" MinWidth="120" />
+                            <DataGridTextColumn Header="Комментарий" Binding="{Binding Comment}" Width="170" MinWidth="80" />
+                            <DataGridTextColumn Header="Создан" Binding="{Binding Created}" Width="95" MinWidth="70" />
+                            <DataGridTextColumn Header="Серверы" Binding="{Binding UsedBy}" Width="*" MinWidth="120" />
                         </DataGrid.Columns>
                         <DataGrid.ContextMenu>
                             <ContextMenu>

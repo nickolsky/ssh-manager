@@ -23,4 +23,6 @@ public sealed class AppSettings
     public int ServerAliveInterval { get; set; } = 30;
     public double WindowWidth { get; set; } = 1000;
     public double WindowHeight { get; set; } = 640;
+    /// <summary>User-resized DataGrid column widths by grid name (all columns except the last, which fills).</summary>
+    public Dictionary<string, double[]> ColumnWidths { get; set; } = [];
 }

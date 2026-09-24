@@ -26,6 +26,8 @@ public partial class MainWindow : Window
         Height = Math.Max(MinHeight, s.WindowHeight);
 
         InputBindings.Add(new KeyBinding(new Mvvm.RelayCommand(() => SearchBox.Focus()), Key.F, ModifierKeys.Control));
+        RestoreColumns(ServersGrid);
+        RestoreColumns(KeysGrid);
         Closing += OnClosing;
         Loaded += (_, _) => ServersGrid.Focus();
     }
@@ -44,8 +46,10 @@ public partial class MainWindow : Window
         {
             s.WindowWidth = Width;
             s.WindowHeight = Height;
-            _host.SettingsStore.Save();
         }
+        SaveColumns(ServersGrid);
+        SaveColumns(KeysGrid);
+        _host.SettingsStore.Save();
         if (!_forceClose && s.CloseToTray)
         {
             e.Cancel = true;
@@ -54,6 +58,27 @@ public partial class MainWindow : Window
         }
         _host.OnMainWindowClosed();
         if (!_forceClose) _host.Exit();
+    }
+
+    /// <summary>Applies saved pixel widths to all columns but the last one, which keeps filling the rest.</summary>
+    private void RestoreColumns(DataGrid grid)
+    {
+        if (!_host.SettingsStore.Settings.ColumnWidths.TryGetValue(grid.Name, out var widths) ||
+            widths.Length != grid.Columns.Count - 1)
+            return;
+        for (int i = 0; i < widths.Length; i++)
+        {
+            var col = grid.Columns[i];
+            if (widths[i] >= col.MinWidth) col.Width = new DataGridLength(widths[i]);
+        }
+    }
+
+    private void SaveColumns(DataGrid grid)
+    {
+        // A tab that was never shown has no measured columns; keep what was saved before.
+        if (grid.Columns.Take(grid.Columns.Count - 1).Any(c => c.ActualWidth <= 0)) return;
+        _host.SettingsStore.Settings.ColumnWidths[grid.Name] =
+            grid.Columns.Take(grid.Columns.Count - 1).Select(c => Math.Round(c.ActualWidth)).ToArray();
     }
 
     private void OnServerDoubleClick(object sender, MouseButtonEventArgs e)
