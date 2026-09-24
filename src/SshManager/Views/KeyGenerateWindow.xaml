@@ -1,0 +1,23 @@
+<Window x:Class="SshManager.Views.KeyGenerateWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Новый SSH-ключ" Width="440" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <StackPanel Margin="24,16,24,20">
+        <TextBlock Style="{StaticResource FieldLabel}" Text="Название" />
+        <TextBox x:Name="NameBox" />
+        <TextBlock Style="{StaticResource FieldLabel}" Text="Комментарий (попадёт в authorized_keys)" />
+        <TextBox x:Name="CommentBox" />
+        <TextBlock Style="{StaticResource FieldLabel}" Text="Тип" />
+        <ComboBox x:Name="TypeBox" SelectedIndex="0">
+            <ComboBoxItem Content="Ed25519 (рекомендуется)" />
+            <ComboBoxItem Content="RSA 4096 (для старых серверов)" />
+        </ComboBox>
+        <ProgressBar x:Name="Busy" IsIndeterminate="True" Height="4" Margin="0,14,0,0" Visibility="Hidden" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button x:Name="OkButton" Content="Сгенерировать" IsDefault="True" Click="OnOk"
+                    Style="{DynamicResource AccentButtonStyle}" MinWidth="120" />
+            <Button Content="Отмена" IsCancel="True" Style="{StaticResource DialogButton}" />
+        </StackPanel>
+    </StackPanel>
+</Window>

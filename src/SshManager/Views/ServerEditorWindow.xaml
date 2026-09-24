@@ -1,0 +1,98 @@
+<Window x:Class="SshManager.Views.ServerEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Сервер" Width="560" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <StackPanel Margin="24,16,24,20">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Style="{StaticResource FieldLabel}" Text="Название" />
+                <TextBox x:Name="NameBox" />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+                <TextBlock Style="{StaticResource FieldLabel}" Text="Группа" />
+                <ComboBox x:Name="GroupBox" IsEditable="True" />
+            </StackPanel>
+        </Grid>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="90" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="140" />
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Style="{StaticResource FieldLabel}" Text="IP-адрес или хост" />
+                <TextBox x:Name="HostBox" />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+                <TextBlock Style="{StaticResource FieldLabel}" Text="Порт" />
+                <TextBox x:Name="PortBox" Text="22" />
+            </StackPanel>
+            <StackPanel Grid.Column="4">
+                <TextBlock Style="{StaticResource FieldLabel}" Text="Пользователь" />
+                <TextBox x:Name="UserBox" Text="root" />
+            </StackPanel>
+        </Grid>
+
+        <TextBlock Style="{StaticResource FieldLabel}" Text="Авторизация" />
+        <StackPanel Orientation="Horizontal">
+            <RadioButton x:Name="AuthPassword" Content="Пароль" GroupName="auth" Checked="OnAuthChanged" Margin="0,0,24,0" />
+            <RadioButton x:Name="AuthKey" Content="SSH-ключ" GroupName="auth" Checked="OnAuthChanged" />
+        </StackPanel>
+
+        <StackPanel x:Name="PasswordPanel">
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Пароль" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <PasswordBox x:Name="PasswordBox" />
+                <TextBox x:Name="PasswordPlain" Visibility="Collapsed" />
+                <ToggleButton x:Name="ShowPassword" Grid.Column="1" Content="Показать" Margin="6,0,0,0"
+                              Checked="OnShowPassword" Unchecked="OnShowPassword" />
+            </Grid>
+        </StackPanel>
+
+        <StackPanel x:Name="KeyPanel">
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Ключ" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ComboBox x:Name="KeyBox" DisplayMemberPath="Name" />
+                <Button Grid.Column="1" Content="Новый ключ…" Margin="6,0,0,0" Click="OnNewKey" />
+            </Grid>
+            <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,0"
+                       Text="Пароль можно оставить сохранённым — он нужен кнопке «Настроить вход по ключу»." />
+        </StackPanel>
+
+        <Expander Header="Дополнительно" Margin="0,14,0,0">
+            <StackPanel>
+                <TextBlock Style="{StaticResource FieldLabel}" Text="Jump-хост (ssh -J), например user@bastion:22" />
+                <TextBox x:Name="JumpBox" />
+                <TextBlock Style="{StaticResource FieldLabel}" Text="Дополнительные аргументы ssh" />
+                <TextBox x:Name="ExtraBox" />
+                <TextBlock Style="{StaticResource FieldLabel}" Text="Заметки" />
+                <TextBox x:Name="NotesBox" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="60" MaxHeight="140"
+                         VerticalScrollBarVisibility="Auto" />
+            </StackPanel>
+        </Expander>
+
+        <TextBlock x:Name="Error" Foreground="#E0443E" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Content="Сохранить" IsDefault="True" Click="OnSave" Style="{DynamicResource AccentButtonStyle}" MinWidth="110" />
+            <Button Content="Отмена" IsCancel="True" Style="{StaticResource DialogButton}" />
+        </StackPanel>
+    </StackPanel>
+</Window>

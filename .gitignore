@@ -1,0 +1,8 @@
+bin/
+obj/
+.vs/
+*.user
+# Personal encrypted vault, settings and known_hosts - never commit
+data/
+# Published build
+app/
