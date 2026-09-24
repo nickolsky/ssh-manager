@@ -148,6 +148,82 @@ public class ScriptManifestTests
     }
 }
 
+public class ContainerControlTests
+{
+    [Fact]
+    public void Inspect_Adds_Policy_And_Compose_Labels()
+    {
+        var list = new List<ContainerInfo> { new() { Name = "uptime-kuma", Image = "louislam/uptime-kuma:1" }, new() { Name = "xray-reality" } };
+        Core.Inventory.DockerInspectParser.Apply(
+            "/uptime-kuma|unless-stopped|uptime-kuma|/opt/uptime-kuma|uptime-kuma\n/xray-reality|no|<no value>|<no value>|<no value>\n/gone|always|||\n", list);
+        Assert.Equal("unless-stopped", list[0].RestartPolicy);
+        Assert.True(list[0].Autostart);
+        Assert.Equal("/opt/uptime-kuma", list[0].ComposeDir);
+        Assert.Equal("no", list[1].RestartPolicy);
+        Assert.False(list[1].Autostart);
+        Assert.Null(list[1].ComposeProject);
+    }
+
+    [Fact]
+    public void Remove_Commands()
+    {
+        var single = new ContainerInfo { Name = "web", Image = "nginx:alpine" };
+        var cmd = Core.Inventory.ContainerCommands.Remove(single, new(false, true, true, true));
+        Assert.Contains("docker rm -fv 'web'", cmd);
+        Assert.Contains("docker rmi 'nginx:alpine'", cmd);
+        Assert.DoesNotContain("rm -rf", cmd);
+
+        var kuma = new ContainerInfo { Name = "uptime-kuma", ComposeProject = "uptime-kuma", ComposeDir = "/opt/uptime-kuma" };
+        cmd = Core.Inventory.ContainerCommands.Remove(kuma, new(true, true, false, true));
+        Assert.Contains("docker compose -p 'uptime-kuma' down --remove-orphans -v", cmd);
+        Assert.Contains("rm -rf -- '/opt/uptime-kuma'", cmd);
+
+        var risky = new ContainerInfo { Name = "x", ComposeProject = "x", ComposeDir = "/etc" };
+        Assert.DoesNotContain("rm -rf", Core.Inventory.ContainerCommands.Remove(risky, new(true, false, false, true)));
+        Assert.Equal("docker update --restart=always 'web'", Core.Inventory.ContainerCommands.SetRestart(single, "always"));
+        Assert.Throws<ArgumentException>(() => Core.Inventory.ContainerCommands.SetRestart(single, "sometimes; rm -rf /"));
+    }
+
+    [Fact]
+    public void Service_Autostart_And_Commands()
+    {
+        var services = new List<ServiceInfo>
+        {
+            new() { Unit = "nginx", Title = "nginx", Active = "active" },
+            new() { Unit = "x-ui", Title = "3X-UI", Active = "inactive" },
+            new() { Unit = "ssh", Title = "OpenSSH", Active = "active" },
+        };
+        Core.Inventory.ServiceListParser.ApplyUnitFiles(
+            "nginx.service enabled enabled\nx-ui.service disabled enabled\nssh.service enabled enabled\nother.service static -\n", services);
+        Assert.True(services[0].Autostart);
+        Assert.False(services[1].Autostart);
+        Assert.Equal("disabled", services[1].Enabled);
+        Assert.Equal("systemctl disable 'nginx.service'", Core.Inventory.ServiceCommands.Disable(services[0]));
+        Assert.Equal("systemctl start 'x-ui.service'", Core.Inventory.ServiceCommands.Start(services[1]));
+        Assert.True(Core.Inventory.ServiceCommands.IsSsh(services[2]));
+        Assert.False(Core.Inventory.ServiceCommands.IsSsh(services[0]));
+    }
+
+    [Fact]
+    public void Kuma_Uses_Current_Major_Version() =>
+        Assert.Contains("image: louislam/uptime-kuma:2", BuiltinScripts.All.Single(b => b.Id == "uptime-kuma").Body);
+
+    [Theory]
+    [InlineData("/opt/app", true)]
+    [InlineData("/root/app", true)]
+    [InlineData("/home/bob/app", true)]
+    [InlineData("/srv/data/app", true)]
+    [InlineData("/opt", false)]
+    [InlineData("/home/bob", false)]
+    [InlineData("/etc/app", false)]
+    [InlineData("/var/lib/docker", false)]
+    [InlineData("/opt/../etc", false)]
+    [InlineData("relative/app", false)]
+    [InlineData(null, false)]
+    public void Only_Project_Folders_Are_Deleted(string? dir, bool ok) =>
+        Assert.Equal(ok, Core.Inventory.ContainerCommands.SafeFolder(dir));
+}
+
 public class ComposeScriptTests
 {
     [Fact]

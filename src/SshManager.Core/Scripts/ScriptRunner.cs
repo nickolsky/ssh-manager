@@ -261,9 +261,6 @@ public sealed partial class ScriptRunner(SshClientFactory ssh, SessionLauncher l
     public static string DockerLogs(ServerEntry s, string container) =>
         Elevated(s, $"docker logs -f --tail 200 {RemoteShell.Quote(container)}");
 
-    public static string DockerRestart(ServerEntry s, string container) =>
-        Elevated(s, $"docker restart {RemoteShell.Quote(container)}");
-
     public static string ServiceStatus(ServerEntry s, string unit) =>
         Elevated(s, $"systemctl status --no-pager -l {RemoteShell.Quote(unit)}");
 

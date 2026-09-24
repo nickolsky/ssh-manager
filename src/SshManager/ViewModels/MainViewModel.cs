@@ -12,6 +12,7 @@ using SshManager.Core.Inventory;
 using SshManager.Core.Models;
 using SshManager.Core.Monitoring;
 using SshManager.Core.Scripts;
+using SshManager.Core.Ssh;
 using SshManager.Core.Storage;
 using SshManager.Mvvm;
 using SshManager.Services;
@@ -79,10 +80,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         CopyAttributeCommand = new RelayCommand(CopyAttribute, () => SelectedNode is AttributeNode);
         DeleteAttributeCommand = new RelayCommand(DeleteAttribute, () => SelectedNode is AttributeNode);
         ContainerLogsCommand = new RelayCommand(() => QuickAction(n => n is ContainerNode c ? ScriptRunner.DockerLogs(n.Server!.Entry, c.Info.Name) : null, "docker logs"), () => SelectedNode is ContainerNode);
-        ContainerRestartCommand = new RelayCommand(() => QuickAction(n => n is ContainerNode c ? ScriptRunner.DockerRestart(n.Server!.Entry, c.Info.Name) : null, "docker restart"), () => SelectedNode is ContainerNode);
+        ContainerRestartCommand = new RelayCommand(() => ContainerAction(ContainerCommands.Restart, "Container.Restarting", "Container.Restarted"),
+            () => SelectedNode is ContainerNode && !Busy);
+        ContainerStartCommand = new RelayCommand(() => ContainerAction(ContainerCommands.Start, "Container.Starting", "Container.Started"),
+            () => SelectedNode is ContainerNode { Info.IsRunning: false } && !Busy);
+        ContainerStopCommand = new RelayCommand(StopContainer, () => SelectedNode is ContainerNode { Info.IsRunning: true } && !Busy);
+        ContainerRemoveCommand = new RelayCommand(RemoveContainer, () => SelectedNode is ContainerNode && !Busy);
+        ContainerAutostartCommand = new RelayCommand(p => SetAutostart(p as string), _ => SelectedNode is ContainerNode && !Busy);
         ServiceStatusCommand = new RelayCommand(() => QuickAction(n => n is ServiceNode s ? ScriptRunner.ServiceStatus(n.Server!.Entry, s.Info.Unit) : null, "systemctl status"), () => SelectedNode is ServiceNode);
         ServiceLogsCommand = new RelayCommand(() => QuickAction(n => n is ServiceNode s ? ScriptRunner.ServiceLogs(n.Server!.Entry, s.Info.Unit) : null, "journalctl"), () => SelectedNode is ServiceNode);
-        ServiceRestartCommand = new RelayCommand(() => QuickAction(n => n is ServiceNode s ? ScriptRunner.ServiceRestart(n.Server!.Entry, s.Info.Unit) : null, "systemctl restart"), () => SelectedNode is ServiceNode);
+        ServiceRestartCommand = new RelayCommand(RestartService, () => SelectedNode is ServiceNode && !Busy);
+        ServiceStartCommand = new RelayCommand(() => ServiceAction(ServiceCommands.Start, "Service.Starting", "Service.Started"),
+            () => SelectedNode is ServiceNode { Info.IsRunning: false } && !Busy);
+        ServiceStopCommand = new RelayCommand(StopService, () => SelectedNode is ServiceNode { Info.IsRunning: true } && !Busy);
+        ServiceEnableCommand = new RelayCommand(() => ServiceAction(ServiceCommands.Enable, "Service.Enabling", "Service.EnabledDone"),
+            () => SelectedNode is ServiceNode { Info.Autostart: false } && !Busy);
+        ServiceDisableCommand = new RelayCommand(DisableService, () => SelectedNode is ServiceNode { Info.Autostart: true } && !Busy);
 
         ExpandAllCommand = new RelayCommand(() => SetAllExpanded(true));
         CollapseAllCommand = new RelayCommand(() => SetAllExpanded(false));
@@ -135,6 +148,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (!Set(ref _selectedNode, value)) return;
             OnPropertyChanged(nameof(SelectedServer));
             OnPropertyChanged(nameof(SelectionKind));
+            OnPropertyChanged(nameof(IsRestartNo));
+            OnPropertyChanged(nameof(IsRestartUnlessStopped));
+            OnPropertyChanged(nameof(IsRestartAlways));
+            OnPropertyChanged(nameof(IsRestartOnFailure));
+            OnPropertyChanged(nameof(IsServiceAutostart));
+            OnPropertyChanged(nameof(IsServiceNoAutostart));
             CommandManager.InvalidateRequerySuggested();
         }
     }
@@ -236,9 +255,26 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ICommand DeleteAttributeCommand { get; }
     public ICommand ContainerLogsCommand { get; }
     public ICommand ContainerRestartCommand { get; }
+    public ICommand ContainerStartCommand { get; }
+    public ICommand ContainerStopCommand { get; }
+    public ICommand ContainerRemoveCommand { get; }
+    public ICommand ContainerAutostartCommand { get; }
+
+    /// <summary>Restart policy of the selected container, for the check marks in "Autostart ▸".</summary>
+    public string? SelectedRestartPolicy => (SelectedNode as ContainerNode)?.Info.RestartPolicy;
+    public bool IsRestartNo => SelectedRestartPolicy == "no";
+    public bool IsRestartUnlessStopped => SelectedRestartPolicy == "unless-stopped";
+    public bool IsRestartAlways => SelectedRestartPolicy == "always";
+    public bool IsRestartOnFailure => SelectedRestartPolicy == "on-failure";
     public ICommand ServiceStatusCommand { get; }
     public ICommand ServiceLogsCommand { get; }
     public ICommand ServiceRestartCommand { get; }
+    public ICommand ServiceStartCommand { get; }
+    public ICommand ServiceStopCommand { get; }
+    public ICommand ServiceEnableCommand { get; }
+    public ICommand ServiceDisableCommand { get; }
+    public bool IsServiceAutostart => (SelectedNode as ServiceNode)?.Info.Autostart == true;
+    public bool IsServiceNoAutostart => SelectedNode is ServiceNode { Info.Autostart: false };
     public ICommand ExpandAllCommand { get; }
     public ICommand CollapseAllCommand { get; }
     public ICommand RefreshAllCommand { get; }
@@ -731,6 +767,95 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var id = server.Entry.Id;
         var key = a.Attribute.Key;
         _host.Vault.Update(d => d.Servers.FirstOrDefault(s => s.Id == id)?.Attributes.RemoveAll(x => x.Key == key));
+    }
+
+    // ---------- containers ----------
+
+    private void ContainerAction(Func<ContainerInfo, string> build, string doingKey, string doneKey)
+    {
+        if (SelectedNode is ContainerNode c) RunOnServer(c.Info.Name, build(c.Info), "Container.Title", doingKey, doneKey);
+    }
+
+    private void ServiceAction(Func<ServiceInfo, string> build, string doingKey, string doneKey)
+    {
+        if (SelectedNode is ServiceNode s) RunOnServer(s.Info.Title, build(s.Info), "Service.Title", doingKey, doneKey);
+    }
+
+    private void StopService()
+    {
+        if (SelectedNode is not ServiceNode { Server: { } node } s) return;
+        var warn = ServiceCommands.IsSsh(s.Info) ? "\n\n" + L.Get("Service.SshWarning") : "";
+        if (!Confirm(L.F("Service.StopConfirm", s.Info.Title, s.Info.Unit, node.Entry.Name) + warn)) return;
+        ServiceAction(ServiceCommands.Stop, "Service.Stopping", "Service.Stopped");
+    }
+
+    private void RestartService()
+    {
+        if (SelectedNode is ServiceNode s && ServiceCommands.IsSsh(s.Info) && !Confirm(L.Get("Service.SshRestartConfirm"))) return;
+        ServiceAction(ServiceCommands.Restart, "Service.Restarting", "Service.Restarted");
+    }
+
+    private void DisableService()
+    {
+        if (SelectedNode is not ServiceNode { Server: { } node } s) return;
+        var warn = ServiceCommands.IsSsh(s.Info) ? "\n\n" + L.Get("Service.SshWarning") : "";
+        if (!Confirm(L.F("Service.DisableConfirm", s.Info.Title, node.Entry.Name) + warn)) return;
+        ServiceAction(ServiceCommands.Disable, "Service.Disabling", "Service.DisabledDone");
+    }
+
+    /// <summary>Runs a command on the selected node's server over SSH (sudo when needed), then re-reads the server.</summary>
+    private async void RunOnServer(string name, string command, string titleKey, string doingKey, string doneKey)
+    {
+        if (SelectedServer is not { } node) return;
+        var server = node.Entry.Clone();
+        Busy = true;
+        Status = L.F(doingKey, name);
+        try
+        {
+            var r = await Task.Run(() =>
+            {
+                using var client = _host.Ssh.Connect(server);
+                return RemoteShell.Run(client, server, command, elevated: true, TimeSpan.FromMinutes(5));
+            });
+            if (r.Ok) Status = L.F(doneKey, name);
+            else
+            {
+                Status = "";
+                Warn(L.Get(titleKey), L.F("Container.Failed", name, r.Combined));
+            }
+        }
+        catch (Exception ex)
+        {
+            Status = "";
+            Warn(L.Get(titleKey), ex.Message);
+        }
+        finally
+        {
+            Busy = false;
+        }
+        _ = _host.Inventory.RefreshAsync(server.Id, interactive: true);
+    }
+
+    private void StopContainer()
+    {
+        if (SelectedNode is not ContainerNode { Server: { } node } c) return;
+        var hint = c.Info.Autostart ? "\n\n" + L.Get("Container.StopAutostartHint") : "";
+        if (!Confirm(L.F("Container.StopConfirm", c.Info.Name, node.Entry.Name) + hint)) return;
+        ContainerAction(ContainerCommands.Stop, "Container.Stopping", "Container.Stopped");
+    }
+
+    private void RemoveContainer()
+    {
+        if (SelectedNode is not ContainerNode { Server: { } node } c) return;
+        if (ContainerRemoveWindow.Ask(Owner, c.Info, node.Entry.Name) is not { } removal) return;
+        ContainerAction(i => ContainerCommands.Remove(i, removal), "Container.Removing", "Container.Removed");
+    }
+
+    private void SetAutostart(string? policy)
+    {
+        if (policy == null || !ContainerCommands.RestartPolicies.Contains(policy)) return;
+        if (SelectedNode is ContainerNode { Info.ComposeProject: { } project } && !Confirm(L.F("Container.ComposePolicyNote", project))) return;
+        ContainerAction(i => ContainerCommands.SetRestart(i, policy), "Container.Updating", "Container.Updated");
     }
 
     private void QuickAction(Func<TreeNode, string?> build, string title)

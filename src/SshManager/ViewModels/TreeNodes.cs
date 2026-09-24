@@ -467,12 +467,22 @@ public sealed class ContainerNode : TreeNode
 
     public ContainerInfo Info { get; }
     public override string Title => Info.Name;
-    public override string? Tip => $"{Info.Name}\n{Info.Image}\n{Info.Status}";
+    public override string? Tip
+    {
+        get
+        {
+            var lines = new List<string> { Info.Name, Info.Image, Info.Status };
+            if (Info.RestartPolicy != null) lines.Add(L.F("Container.PolicyTip", Info.RestartPolicy));
+            if (Info.ComposeProject != null) lines.Add(L.F("Container.ComposeTip", Info.ComposeProject, Info.ComposeDir ?? "—"));
+            return string.Join("\n", lines);
+        }
+    }
     public override string Icon => "";
     public override string Dot => Info.IsRunning ? "ok" : Info.State is "restarting" ? "warn" : "off";
     public override bool IsMuted => !Info.IsRunning;
     public override string Address => Info.Image;
-    public override string Os => Info.Status;
+    /// <summary>Status plus a mark when the container starts on boot.</summary>
+    public override string Os => Info.Autostart ? Info.Status + "  ⟳" : Info.Status;
     public override string Forwards => Info.Ports;
     public override string? ForwardsTip => Info.Ports.Length == 0 ? null : Info.Ports.Replace(", ", "\n");
 }
@@ -491,7 +501,9 @@ public sealed class ServiceNode : TreeNode
     public override string Dot => Info.Active switch { "active" => "ok", "failed" => "bad", "activating" or "reloading" => "warn", _ => "off" };
     public override bool IsMuted => !Info.IsRunning;
     public override string Address => Info.Unit;
-    public override string Os => $"{Info.Active} ({Info.Sub})";
+    public override string Os => $"{Info.Active} ({Info.Sub})" + (Info.Autostart ? "  ⟳" : "");
+    public override string? Tip => $"{Info.Title}\n{Info.Unit}.service\n{Info.Active} ({Info.Sub})" +
+                                   (Info.Enabled != null ? "\n" + L.F("Service.EnabledTip", Info.Enabled) : "");
 }
 
 public sealed class ForwardNode : TreeNode

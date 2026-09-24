@@ -78,6 +78,28 @@ public static class DockerPsParser
 }
 
 /// <summary>
+/// <c>docker inspect --format '{{.Name}}|restart policy|compose project|compose dir|compose service'</c>:
+/// fills the fields docker ps does not show.
+/// </summary>
+public static class DockerInspectParser
+{
+    public static void Apply(string text, List<ContainerInfo> containers)
+    {
+        var byName = containers.DistinctBy(c => c.Name).ToDictionary(c => c.Name, StringComparer.Ordinal);
+        foreach (var raw in text.Split('\n'))
+        {
+            var p = raw.Trim().Split('|');
+            if (p.Length < 2 || !byName.TryGetValue(p[0].TrimStart('/'), out var c)) continue;
+            static string? V(string[] a, int i) => i < a.Length && a[i].Length > 0 && a[i] != "<no value>" ? a[i] : null;
+            c.RestartPolicy = V(p, 1);
+            c.ComposeProject = V(p, 2);
+            c.ComposeDir = V(p, 3);
+            c.ComposeService = V(p, 4);
+        }
+    }
+}
+
+/// <summary>
 /// <c>systemctl list-units --type=service --all --no-legend --plain</c>, filtered to services worth showing.
 /// </summary>
 public static class ServiceListParser
@@ -96,6 +118,17 @@ public static class ServiceListParser
             list.Add(new ServiceInfo { Unit = unit, Title = title, Active = parts[2], Sub = parts[3] });
         }
         return list.OrderBy(s => s.Title, StringComparer.OrdinalIgnoreCase).ThenBy(s => s.Unit).ToList();
+    }
+
+    /// <summary><c>systemctl list-unit-files --type=service --no-legend</c>: "nginx.service enabled enabled".</summary>
+    public static void ApplyUnitFiles(string text, List<ServiceInfo> services)
+    {
+        var byUnit = services.DistinctBy(s => s.Unit).ToDictionary(s => s.Unit + ".service", StringComparer.Ordinal);
+        foreach (var raw in text.Split('\n'))
+        {
+            var p = raw.Split((char[]?)null, 3, StringSplitOptions.RemoveEmptyEntries);
+            if (p.Length >= 2 && byUnit.TryGetValue(p[0], out var s)) s.Enabled = p[1];
+        }
     }
 }
 

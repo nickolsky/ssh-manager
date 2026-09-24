@@ -18,8 +18,11 @@ public sealed class ServerInventoryService(VaultService vault, SshClientFactory 
     private const string Script = """
         echo '@@sshm:os'; cat /etc/os-release 2>/dev/null || cat /usr/lib/os-release 2>/dev/null
         echo '@@sshm:kernel'; uname -srm 2>/dev/null
-        if command -v docker >/dev/null 2>&1; then echo '@@sshm:docker'; docker ps -a --format '{{json .}}' 2>&1; fi
-        if command -v systemctl >/dev/null 2>&1; then echo '@@sshm:services'; systemctl list-units --type=service --all --no-legend --plain --no-pager 2>/dev/null; fi
+        if command -v docker >/dev/null 2>&1; then echo '@@sshm:docker'; docker ps -a --format '{{json .}}' 2>&1
+          ids=$(docker ps -aq 2>/dev/null); if [ -n "$ids" ]; then echo '@@sshm:docker-inspect'
+          docker inspect --format '{{.Name}}|{{.HostConfig.RestartPolicy.Name}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.project.working_dir"}}|{{index .Config.Labels "com.docker.compose.service"}}' $ids 2>/dev/null; fi; fi
+        if command -v systemctl >/dev/null 2>&1; then echo '@@sshm:services'; systemctl list-units --type=service --all --no-legend --plain --no-pager 2>/dev/null
+          echo '@@sshm:unit-files'; systemctl list-unit-files --type=service --no-legend --no-pager 2>/dev/null; fi
         if command -v iptables >/dev/null 2>&1; then echo '@@sshm:nat'; iptables -t nat -S 2>&1; fi
         echo '@@sshm:ports'; ss -Htlnp 2>/dev/null || ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null
         echo '@@sshm:end'
@@ -112,9 +115,16 @@ public sealed class ServerInventoryService(VaultService vault, SshClientFactory 
         f.DockerAvailable = sections.TryGetValue("docker", out var docker);
         if (docker == null) f.Containers = [];
         else if (!docker.Contains("permission denied", StringComparison.OrdinalIgnoreCase))
+        {
             f.Containers = DockerPsParser.Parse(docker);
+            if (sections.TryGetValue("docker-inspect", out var inspect)) DockerInspectParser.Apply(inspect, f.Containers);
+        }
 
-        if (sections.TryGetValue("services", out var services)) f.Services = ServiceListParser.Parse(services);
+        if (sections.TryGetValue("services", out var services))
+        {
+            f.Services = ServiceListParser.Parse(services);
+            if (sections.TryGetValue("unit-files", out var files)) ServiceListParser.ApplyUnitFiles(files, f.Services);
+        }
 
         // "-P PREROUTING ACCEPT" is always printed when we could read the table (i.e. we were root)
         if (sections.TryGetValue("nat", out var nat) && nat.Contains("-P PREROUTING", StringComparison.Ordinal))

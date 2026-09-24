@@ -1,0 +1,28 @@
+<Window x:Class="SshManager.Views.ContainerRemoveWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:SshManager.Localization"
+        Title="{l:Tr Container.RemoveTitle}" Width="540" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <StackPanel Margin="24,16,24,20">
+        <TextBlock x:Name="Header" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock x:Name="Info" Style="{StaticResource Hint}" Margin="0,4,0,12" />
+
+        <StackPanel x:Name="ScopePanel" Margin="0,0,0,10">
+            <RadioButton x:Name="OnlyContainer" GroupName="scope" Checked="OnScopeChanged" />
+            <RadioButton x:Name="WholeProject" GroupName="scope" Checked="OnScopeChanged" Margin="0,4,0,0" />
+        </StackPanel>
+
+        <CheckBox x:Name="Volumes" />
+        <CheckBox x:Name="Image" Content="{l:Tr Container.RemoveImage}" Margin="0,6,0,0" />
+        <CheckBox x:Name="Folder" Margin="0,6,0,0" />
+
+        <TextBlock Text="{l:Tr Container.RemoveWarning}" TextWrapping="Wrap" Margin="0,14,0,0"
+                   Foreground="{DynamicResource SystemFillColorCautionBrush}" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Content="{l:Tr Container.RemoveButton}" Click="OnRemove" Style="{DynamicResource AccentButtonStyle}" MinWidth="120" />
+            <Button Content="{l:Tr Common.Cancel}" IsCancel="True" IsDefault="True" Style="{StaticResource DialogButton}" />
+        </StackPanel>
+    </StackPanel>
+</Window>

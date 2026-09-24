@@ -50,8 +50,16 @@ public sealed class ContainerInfo
     public string State { get; set; } = "";
     public string Status { get; set; } = "";
     public string Ports { get; set; } = "";
+    /// <summary>Docker restart policy: no, always, unless-stopped, on-failure (null = unknown).</summary>
+    public string? RestartPolicy { get; set; }
+    /// <summary>docker compose project, folder and service the container belongs to.</summary>
+    public string? ComposeProject { get; set; }
+    public string? ComposeDir { get; set; }
+    public string? ComposeService { get; set; }
 
     public bool IsRunning => State.Equals("running", StringComparison.OrdinalIgnoreCase);
+    /// <summary>Starts again after a reboot / docker restart.</summary>
+    public bool Autostart => RestartPolicy is "always" or "unless-stopped" or "on-failure";
 }
 
 public sealed class ListeningPort
@@ -72,6 +80,10 @@ public sealed class ServiceInfo
     public string Title { get; set; } = "";
     /// <summary>active / inactive / failed.</summary>
     public string Active { get; set; } = "";
+    /// <summary>systemctl is-enabled: enabled, disabled, static, masked… (null = unknown).</summary>
+    public string? Enabled { get; set; }
+    /// <summary>Started on boot.</summary>
+    public bool Autostart => Enabled is "enabled" or "enabled-runtime" or "alias";
     /// <summary>running / exited / dead…</summary>
     public string Sub { get; set; } = "";
 

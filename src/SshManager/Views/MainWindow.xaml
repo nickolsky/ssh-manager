@@ -37,6 +37,22 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
+        <Style x:Key="SepContainer" TargetType="Separator" BasedOn="{StaticResource {x:Type Separator}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="container">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="SepService" TargetType="Separator" BasedOn="{StaticResource {x:Type Separator}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="service">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
         <Style x:Key="MiService" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
             <Setter Property="Visibility" Value="Collapsed" />
             <Style.Triggers>
@@ -411,11 +427,33 @@
                                     <MenuItem Header="{l:Tr Ctx.Delete}" Command="{Binding DeleteServerCommand}" Style="{StaticResource MiServer}" />
 
                                     <MenuItem Header="{l:Tr Ctx.ContainerLogs}" Command="{Binding ContainerLogsCommand}" FontWeight="SemiBold" Style="{StaticResource MiContainer}" />
+                                    <Separator Style="{StaticResource SepContainer}" />
+                                    <MenuItem Header="{l:Tr Ctx.ContainerStart}" Command="{Binding ContainerStartCommand}" Style="{StaticResource MiContainer}" />
+                                    <MenuItem Header="{l:Tr Ctx.ContainerStop}" Command="{Binding ContainerStopCommand}" Style="{StaticResource MiContainer}" />
                                     <MenuItem Header="{l:Tr Ctx.ContainerRestart}" Command="{Binding ContainerRestartCommand}" Style="{StaticResource MiContainer}" />
+                                    <MenuItem Header="{l:Tr Ctx.ContainerAutostart}" Style="{StaticResource MiContainer}">
+                                        <MenuItem Header="{l:Tr Container.PolicyUnlessStopped}" IsChecked="{Binding IsRestartUnlessStopped, Mode=OneWay}"
+                                                  Command="{Binding ContainerAutostartCommand}" CommandParameter="unless-stopped" />
+                                        <MenuItem Header="{l:Tr Container.PolicyAlways}" IsChecked="{Binding IsRestartAlways, Mode=OneWay}"
+                                                  Command="{Binding ContainerAutostartCommand}" CommandParameter="always" />
+                                        <MenuItem Header="{l:Tr Container.PolicyOnFailure}" IsChecked="{Binding IsRestartOnFailure, Mode=OneWay}"
+                                                  Command="{Binding ContainerAutostartCommand}" CommandParameter="on-failure" />
+                                        <MenuItem Header="{l:Tr Container.PolicyNo}" IsChecked="{Binding IsRestartNo, Mode=OneWay}"
+                                                  Command="{Binding ContainerAutostartCommand}" CommandParameter="no" />
+                                    </MenuItem>
+                                    <Separator Style="{StaticResource SepContainer}" />
+                                    <MenuItem Header="{l:Tr Ctx.ContainerRemove}" Command="{Binding ContainerRemoveCommand}" Style="{StaticResource MiContainer}" />
 
                                     <MenuItem Header="{l:Tr Ctx.ServiceStatus}" Command="{Binding ServiceStatusCommand}" FontWeight="SemiBold" Style="{StaticResource MiService}" />
                                     <MenuItem Header="{l:Tr Ctx.ServiceLogs}" Command="{Binding ServiceLogsCommand}" Style="{StaticResource MiService}" />
+                                    <Separator Style="{StaticResource SepService}" />
+                                    <MenuItem Header="{l:Tr Ctx.ContainerStart}" Command="{Binding ServiceStartCommand}" Style="{StaticResource MiService}" />
+                                    <MenuItem Header="{l:Tr Ctx.ContainerStop}" Command="{Binding ServiceStopCommand}" Style="{StaticResource MiService}" />
                                     <MenuItem Header="{l:Tr Ctx.ServiceRestart}" Command="{Binding ServiceRestartCommand}" Style="{StaticResource MiService}" />
+                                    <MenuItem Header="{l:Tr Ctx.ContainerAutostart}" Style="{StaticResource MiService}">
+                                        <MenuItem Header="{l:Tr Service.AutostartOn}" IsChecked="{Binding IsServiceAutostart, Mode=OneWay}" Command="{Binding ServiceEnableCommand}" />
+                                        <MenuItem Header="{l:Tr Service.AutostartOff}" IsChecked="{Binding IsServiceNoAutostart, Mode=OneWay}" Command="{Binding ServiceDisableCommand}" />
+                                    </MenuItem>
 
                                     <MenuItem Header="{l:Tr Ctx.CopyValue}" Command="{Binding CopyAttributeCommand}" FontWeight="SemiBold" Style="{StaticResource MiAttribute}" />
                                     <MenuItem Header="{l:Tr Ctx.DeleteAttribute}" Command="{Binding DeleteAttributeCommand}" Style="{StaticResource MiAttribute}" />
