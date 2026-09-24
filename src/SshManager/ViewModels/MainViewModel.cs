@@ -74,6 +74,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         PortMonitorCommand = new RelayCommand(OpenPortMonitor, HasServer);
         TogglePortCommand = new RelayCommand(TogglePort, () => SelectedNode is PortNode { CanMonitor: true });
         RunScriptCommand = new RelayCommand(p => RunScript(p as ScriptEntry), _ => HasServer());
+        UptimeHistoryCommand = new RelayCommand(OpenUptimeHistory, () => SelectedServer != null);
+        InstallDockerCommand = new RelayCommand(InstallDocker, () => HasServer() && SelectedServer!.Entry.Facts?.DockerAvailable != true);
+        CopyAttributeCommand = new RelayCommand(CopyAttribute, () => SelectedNode is AttributeNode);
+        DeleteAttributeCommand = new RelayCommand(DeleteAttribute, () => SelectedNode is AttributeNode);
         ContainerLogsCommand = new RelayCommand(() => QuickAction(n => n is ContainerNode c ? ScriptRunner.DockerLogs(n.Server!.Entry, c.Info.Name) : null, "docker logs"), () => SelectedNode is ContainerNode);
         ContainerRestartCommand = new RelayCommand(() => QuickAction(n => n is ContainerNode c ? ScriptRunner.DockerRestart(n.Server!.Entry, c.Info.Name) : null, "docker restart"), () => SelectedNode is ContainerNode);
         ServiceStatusCommand = new RelayCommand(() => QuickAction(n => n is ServiceNode s ? ScriptRunner.ServiceStatus(n.Server!.Entry, s.Info.Unit) : null, "systemctl status"), () => SelectedNode is ServiceNode);
@@ -145,6 +149,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ServiceNode => "service",
         ForwardNode => "forward",
         PortNode { Monitored: not null } => "port-on",
+        AttributeNode => "attribute",
         PortNode => "port-off",
         GroupNode => "group",
         null => "",
@@ -225,6 +230,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ICommand PortMonitorCommand { get; }
     public ICommand TogglePortCommand { get; }
     public ICommand RunScriptCommand { get; }
+    public ICommand UptimeHistoryCommand { get; }
+    public ICommand InstallDockerCommand { get; }
+    public ICommand CopyAttributeCommand { get; }
+    public ICommand DeleteAttributeCommand { get; }
     public ICommand ContainerLogsCommand { get; }
     public ICommand ContainerRestartCommand { get; }
     public ICommand ServiceStatusCommand { get; }
@@ -274,6 +283,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         if (!_serverNodes.TryGetValue(id, out var node)) return;
         node.SetHealth(_host.Health.Get(id), _host.Health.GetPorts(id));
+        node.SetUptime(_host.Uptime.Stats(id, DateTime.UtcNow));
         UpdateGroupCounts();
         OnPropertyChanged(nameof(Summary));
     });
@@ -386,6 +396,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 var node = new ServerNode(this, parts.Length, s, parent);
                 node.SetHealth(_host.Health.Get(s.Id), _host.Health.GetPorts(s.Id));
                 node.SetMetrics(_host.Metrics.Get(s.Id));
+                node.SetUptime(_host.Uptime.Stats(s.Id, DateTime.UtcNow));
                 node.SetLoading(_host.Inventory.IsRunning(s.Id));
                 node.IsExpanded = _expandedServers.Contains(s.Id);
                 _serverNodes[s.Id] = node;
@@ -526,10 +537,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var matching = scripts.Where(s => s.Matches(server?.Facts)).ToList();
         var other = scripts.Except(matching).ToList();
         foreach (var s in matching)
-            InstallItems.Add(new MenuEntry(s.Name, RunScriptCommand, s, Bold: !string.IsNullOrWhiteSpace(s.OsFilter)));
+            InstallItems.Add(new MenuEntry(MenuName(s), RunScriptCommand, s, Bold: !string.IsNullOrWhiteSpace(s.OsFilter)));
         if (other.Count > 0)
         {
-            var children = other.Select(s => new MenuEntry($"{s.Name}  ({s.OsFilter})", RunScriptCommand, s)).ToList();
+            var children = other.Select(s => new MenuEntry($"{MenuName(s)}  ({s.OsFilter})", RunScriptCommand, s)).ToList();
             if (matching.Count == 0) foreach (var c in children) InstallItems.Add(c);
             else InstallItems.Add(new MenuEntry(L.Get("Scripts.OtherOs"), Children: children));
         }
@@ -581,6 +592,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (i < 0) return;
             var hostChanged = d.Servers[i].Host != copy.Host;
             copy.Facts = d.Servers[i].Facts; // collected in the meantime
+            copy.Attributes = d.Servers[i].Attributes; // a script may have finished while the editor was open
+            copy.ScriptRuns = d.Servers[i].ScriptRuns;
             if (hostChanged && copy.Facts != null) copy.Facts.Geo = null;
             d.Servers[i] = copy;
         });
@@ -596,6 +609,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         copy.Name += L.Get("Main.CopySuffix");
         copy.LastConnected = null;
         copy.Facts = null;
+        copy.Attributes = []; // results belong to the original machine
+        copy.ScriptRuns = [];
         if (new ServerEditorWindow(_host, copy, isNew: true) { Owner = Owner }.ShowDialog() != true) return;
         _host.Vault.Update(d => d.Servers.Add(copy));
         Select(copy.Id);
@@ -608,6 +623,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (!Confirm(L.F("Main.DeleteServerConfirm", s.Name, s.Display))) return;
         _expandedServers.Remove(s.Id);
         _host.Vault.Update(d => d.Servers.RemoveAll(x => x.Id == s.Id));
+        _host.Uptime.Delete(s.Id);
     }
 
     public bool CanDelete => DeleteServerCommand.CanExecute(null) && SelectedNode is ServerNode;
@@ -680,28 +696,41 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Status = L.F(on ? "Port.MonitorOn" : "Port.MonitorOff", node.Port, server.Entry.Name);
     }
 
-    private async void RunScript(ScriptEntry? script)
+    /// <summary>Opens the run window: parameters, live output, results saved to the server.</summary>
+    private void RunScript(ScriptEntry? script)
     {
         if (script == null || SelectedServer == null) return;
-        var server = SelectedServer.Entry.Clone();
-        if (!Confirm(L.F("Scripts.RunConfirm", script.Name, server.Name, server.Display))) return;
-        Busy = true;
-        Status = L.F("Scripts.Uploading", script.Name, server.Name);
-        try
-        {
-            var command = await Task.Run(() => _host.Scripts.Prepare(server, script));
-            _host.Scripts.Launch(server, command, script.Name);
-            Status = L.F("Scripts.Started", script.Name, server.Name);
-        }
-        catch (Exception ex)
-        {
-            Status = "";
-            Warn(L.Get("Scripts.Title"), ex.Message);
-        }
-        finally
-        {
-            Busy = false;
-        }
+        new ScriptRunWindow(_host, SelectedServer.Entry.Id, script.Clone()) { Owner = Owner }.Show();
+    }
+
+    private void InstallDocker()
+    {
+        if (SelectedServer == null) return;
+        new ScriptRunWindow(_host, SelectedServer.Entry.Id, BuiltinScripts.DockerScript(_host.Vault.Data)) { Owner = Owner }.Show();
+    }
+
+    private static string MenuName(ScriptEntry s) => s.Kind == ScriptKind.Compose ? s.Name + "  [compose]" : s.Name;
+
+    private void OpenUptimeHistory()
+    {
+        if (SelectedServer == null) return;
+        new UptimeWindow(_host, SelectedServer.Entry.Clone()) { Owner = Owner }.Show();
+    }
+
+    private void CopyAttribute()
+    {
+        if (SelectedNode is not AttributeNode a) return;
+        Clipboard.SetText(a.Attribute.Value);
+        Status = L.F("Attr.Copied", a.Attribute.Label);
+    }
+
+    private void DeleteAttribute()
+    {
+        if (SelectedNode is not AttributeNode { Server: { } server } a) return;
+        if (!Confirm(L.F("Attr.DeleteConfirm", a.Attribute.Label, server.Entry.Name))) return;
+        var id = server.Entry.Id;
+        var key = a.Attribute.Key;
+        _host.Vault.Update(d => d.Servers.FirstOrDefault(s => s.Id == id)?.Attributes.RemoveAll(x => x.Key == key));
     }
 
     private void QuickAction(Func<TreeNode, string?> build, string title)

@@ -6,6 +6,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- shipped install scripts, see BuiltinScripts -->
+    <EmbeddedResource Include="Scripts\Builtin\*.sh;Scripts\Builtin\*.yml" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="SshManager.Tests" />
   </ItemGroup>
 

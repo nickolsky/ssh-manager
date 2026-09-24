@@ -3,6 +3,7 @@ using System.Windows.Input;
 using Microsoft.Win32;
 using SshManager.Core;
 using SshManager.Core.Models;
+using SshManager.Core.Scripts;
 using SshManager.Core.Ssh;
 using SshManager.Mvvm;
 using SshManager.Services;
@@ -21,6 +22,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     private string _scriptOs = "";
     private string _scriptBody = "";
     private bool _scriptSudo = true;
+    private ScriptKind _scriptKind;
     private bool _dirty;
     private bool _loadingScript;
 
@@ -33,6 +35,9 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         DuplicateScriptCommand = new RelayCommand(DuplicateScript, () => SelectedScript != null);
         DeleteScriptCommand = new RelayCommand(DeleteScript, () => SelectedScript != null);
         SaveScriptCommand = new RelayCommand(() => SaveScript(), () => SelectedScript != null && _dirty);
+        AddOsCommand = new RelayCommand(AddOs);
+        AddComposeCommand = new RelayCommand(AddCompose);
+        RestoreBuiltinsCommand = new RelayCommand(RestoreBuiltins);
     }
 
     private AppSettings S => _host.SettingsStore.Settings;
@@ -339,7 +344,55 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     public string ScriptOsFilter
     {
         get => _scriptOs;
-        set => Edit(ref _scriptOs, value);
+        set
+        {
+            Edit(ref _scriptOs, value);
+            OnPropertyChanged(nameof(ScriptOsSummary));
+        }
+    }
+
+    /// <summary>Choices of the OS drop-down: common systems plus what the servers run.</summary>
+    public ObservableCollection<OsOption> OsOptions { get; } = [];
+
+    public string ScriptOsSummary => OsOption.Summary(_scriptOs, OsOptions);
+
+    public string NewOsId { get; set; } = "";
+
+    public ICommand AddOsCommand { get; }
+
+    /// <summary>Fills <see cref="OsOptions"/> and ticks the ones in the current filter.</summary>
+    private void BuildOsOptions()
+    {
+        var selected = ScriptEntry.SplitOs(_scriptOs).Select(x => x.ToLowerInvariant()).ToHashSet();
+        var facts = _host.Vault.IsUnlocked ? _host.Vault.Data.Servers.Select(s => s.Facts).OfType<ServerFacts>() : [];
+        foreach (var o in OsOptions) o.PropertyChanged -= OnOsToggled;
+        OsOptions.Clear();
+        foreach (var o in OsOption.Build(facts, selected))
+        {
+            o.PropertyChanged += OnOsToggled;
+            OsOptions.Add(o);
+        }
+        OnPropertyChanged(nameof(ScriptOsSummary));
+    }
+
+    private void OnOsToggled(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(OsOption.IsChecked)) return;
+        ScriptOsFilter = string.Join(",", OsOptions.Where(o => o.IsChecked).Select(o => o.Id));
+    }
+
+    private void AddOs()
+    {
+        var id = NewOsId.Trim().ToLowerInvariant();
+        if (id.Length == 0 || id.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' or ':'))) return;
+        if (OsOptions.FirstOrDefault(o => o.Id == id) is { } existing) existing.IsChecked = true;
+        else
+        {
+            ScriptOsFilter = string.Join(",", ScriptEntry.SplitOs(_scriptOs).Append(id).Distinct());
+            BuildOsOptions();
+        }
+        NewOsId = "";
+        OnPropertyChanged(nameof(NewOsId));
     }
 
     public string ScriptBody
@@ -360,6 +413,66 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     public ICommand DuplicateScriptCommand { get; }
     public ICommand DeleteScriptCommand { get; }
     public ICommand SaveScriptCommand { get; }
+    public ICommand RestoreBuiltinsCommand { get; }
+    public ICommand AddComposeCommand { get; }
+
+    /// <summary>0 = bash, 1 = docker compose.</summary>
+    public int ScriptKindIndex
+    {
+        get => (int)_scriptKind;
+        set
+        {
+            Edit(ref _scriptKind, (ScriptKind)value);
+            OnPropertyChanged(nameof(IsCompose));
+        }
+    }
+
+    public bool IsCompose => _scriptKind == ScriptKind.Compose;
+
+    private const string ComposeTemplate = """
+        # @name Новый сервис
+        # @project my-service
+        # @description Файл кладётся в /opt/my-service, параметры — в .env рядом, затем docker compose up -d.
+        # @param APP_PORT number required default=8080 label="Порт"
+        # @result APP_URL label="Адрес" value="http://${SSHM_HOST}:${APP_PORT}"
+        # @result APP_PORT label="Порт" value="${APP_PORT}" monitor="My service"
+        services:
+          app:
+            image: nginx:alpine
+            restart: unless-stopped
+            ports:
+              - "${APP_PORT}:80"
+
+        """;
+
+    private void AddCompose()
+    {
+        if (_dirty) SaveScript();
+        var s = new ScriptEntry { Name = L.Get("Scripts.NewCompose"), Kind = ScriptKind.Compose, Body = ComposeTemplate };
+        _host.Vault.Update(d => d.Scripts.Add(s));
+        OnVaultChanged();
+        SelectedScript = Scripts.FirstOrDefault(x => x.Id == s.Id);
+    }
+
+    /// <summary>Brings back deleted built-in scripts and resets edited ones to the shipped text.</summary>
+    private void RestoreBuiltins()
+    {
+        if (!_main.Confirm(L.Get("Scripts.RestoreBuiltinsConfirm"))) return;
+        if (_dirty) SaveScript();
+        _host.Vault.Update(d =>
+        {
+            d.RemovedBuiltins.Clear();
+            foreach (var b in BuiltinScripts.All)
+            {
+                if (d.Scripts.FirstOrDefault(s => s.BuiltinId == b.Id) is not { } s) continue;
+                s.Body = b.Body;
+                s.OsFilter = b.Manifest.Os ?? s.OsFilter;
+                s.BuiltinHash = BuiltinScripts.Hash(b.Body);
+            }
+            BuiltinScripts.Sync(d); // adds the deleted ones
+        });
+        OnVaultChanged();
+    }
 
     private void Edit<T>(ref T field, T value, [System.Runtime.CompilerServices.CallerMemberName] string? name = null)
     {
@@ -376,6 +489,8 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         ScriptOsFilter = _selectedScript?.OsFilter ?? "";
         ScriptBody = _selectedScript?.Body ?? "";
         ScriptUseSudo = _selectedScript?.UseSudo ?? true;
+        ScriptKindIndex = (int)(_selectedScript?.Kind ?? ScriptKind.Bash);
+        BuildOsOptions();
         _loadingScript = false;
         _dirty = false;
         OnPropertyChanged(nameof(ScriptDirty));
@@ -435,8 +550,13 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         if (_selectedScript == null) return;
         if (!_main.Confirm(L.F("Scripts.DeleteConfirm", _selectedScript.Name))) return;
         var id = _selectedScript.Id;
+        var builtin = _selectedScript.BuiltinId;
         _dirty = false;
-        _host.Vault.Update(d => d.Scripts.RemoveAll(x => x.Id == id));
+        _host.Vault.Update(d =>
+        {
+            d.Scripts.RemoveAll(x => x.Id == id);
+            if (builtin != null && !d.RemovedBuiltins.Contains(builtin)) d.RemovedBuiltins.Add(builtin);
+        });
         OnVaultChanged();
         SelectedScript = Scripts.FirstOrDefault();
     }
@@ -450,6 +570,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
             .Select(x => x.ToLowerInvariant()));
         var body = _scriptBody;
         var sudo = _scriptSudo;
+        var kind = _scriptKind;
         _dirty = false;
         _host.Vault.Update(d =>
         {
@@ -459,7 +580,69 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
             s.OsFilter = os;
             s.Body = body;
             s.UseSudo = sudo;
+            s.Kind = kind;
         });
         OnPropertyChanged(nameof(ScriptDirty));
+    }
+}
+
+/// <summary>One entry of the script OS drop-down: an os-release ID, optionally with a version ("debian:12").</summary>
+public sealed class OsOption(string id, string label, bool isChecked) : ObservableObject
+{
+    private bool _isChecked = isChecked;
+
+    private static readonly (string Id, string Name)[] Common =
+    [
+        ("debian", "Debian"), ("debian:12", "Debian 12"), ("debian:13", "Debian 13"),
+        ("ubuntu", "Ubuntu"), ("ubuntu:22.04", "Ubuntu 22.04"), ("ubuntu:24.04", "Ubuntu 24.04"),
+        ("centos", "CentOS"), ("rhel", "RHEL"), ("almalinux", "AlmaLinux"), ("rocky", "Rocky Linux"),
+        ("fedora", "Fedora"), ("alpine", "Alpine"), ("arch", "Arch Linux"), ("opensuse-leap", "openSUSE Leap"),
+        ("amzn", "Amazon Linux"),
+    ];
+
+    public string Id { get; } = id;
+    public string Label { get; } = label;
+
+    public bool IsChecked
+    {
+        get => _isChecked;
+        set => Set(ref _isChecked, value);
+    }
+
+    public static List<OsOption> Build(IEnumerable<ServerFacts> servers, IReadOnlySet<string> selected)
+    {
+        var names = new Dictionary<string, string>();
+        foreach (var (id, name) in Common) names[id] = name;
+        foreach (var f in servers)
+        {
+            if (f.OsId is not { Length: > 0 } id) continue;
+            var name = f.OsName ?? id;
+            names.TryAdd(id, name);
+            if (f.OsVersion is { Length: > 0 } v) names.TryAdd($"{id}:{v}", $"{name} {v}");
+        }
+        foreach (var id in selected) names.TryAdd(id, id);
+        return names
+            .OrderBy(n => n.Key.Split(':')[0], StringComparer.Ordinal).ThenBy(n => n.Key.Contains(':') ? 1 : 0).ThenBy(n => n.Key, StringComparer.Ordinal)
+            .Select(n => new OsOption(n.Key, Describe(n.Key, n.Value), selected.Contains(n.Key)))
+            .ToList();
+    }
+
+    /// <summary>"Debian (any version, and Ubuntu…)" for bare IDs, which also match derived systems.</summary>
+    private static string Describe(string id, string name) => id.Contains(':')
+        ? name
+        : id switch
+        {
+            "debian" => L.F("Os.AnyDerived", name, "Ubuntu…"),
+            "rhel" => L.F("Os.AnyDerived", name, "AlmaLinux, Rocky…"),
+            _ => L.F("Os.Any", name),
+        };
+
+    public static string Summary(string filter, IEnumerable<OsOption> options)
+    {
+        var ids = ScriptEntry.SplitOs(filter);
+        if (ids.Length == 0) return L.Get("Os.AllSystems");
+        var byId = options.ToDictionary(o => o.Id, o => o.Label);
+        return string.Join(", ", ids.Select(i => i.Contains(':') && byId.TryGetValue(i, out var l) ? l
+            : Common.FirstOrDefault(c => c.Id == i).Name ?? i));
     }
 }

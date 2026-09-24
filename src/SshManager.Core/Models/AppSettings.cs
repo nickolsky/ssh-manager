@@ -50,7 +50,9 @@ public sealed class AppSettings
     /// <summary>"ru" / "en"; null = Windows UI language.</summary>
     public string? Language { get; set; }
     /// <summary>Default availability check interval in minutes (0 = off); servers can override it.</summary>
-    public int MonitorIntervalMinutes { get; set; } = 10;
+    public int MonitorIntervalMinutes { get; set; } = 5;
+    /// <summary>Format of this file; older files are migrated on load.</summary>
+    public int SettingsVersion { get; set; }
     public bool NotifyOnServerDown { get; set; } = true;
     /// <summary>Look up server location via an online GeoIP service.</summary>
     public bool GeoIpEnabled { get; set; } = true;

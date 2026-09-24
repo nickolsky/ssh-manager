@@ -1,0 +1,3 @@
+# shell scripts and compose files run on Linux servers
+*.sh text eol=lf
+*.yml text eol=lf

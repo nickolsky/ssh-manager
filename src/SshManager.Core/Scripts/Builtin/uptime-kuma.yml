@@ -1,0 +1,27 @@
+# @name Uptime Kuma — мониторинг сайтов (Docker Compose)
+# @name_en Uptime Kuma — website monitoring (Docker Compose)
+# @project uptime-kuma
+# @description Пример скрипта типа Docker Compose: файл кладётся в /opt/uptime-kuma, параметры — в .env рядом,
+# @description затем docker compose pull && up -d (Docker ставится сам, если его нет). Повторный запуск обновляет образ.
+# @description_en Example of a Docker Compose script: the file goes to /opt/uptime-kuma, the parameters to .env next to it,
+# @description_en then docker compose pull && up -d (Docker is installed first if missing). Running it again updates the image.
+#
+# @param KUMA_PORT number required default=3001 label="Порт веб-интерфейса" label_en="Web UI port"
+# @param KUMA_BIND choice options=0.0.0.0,127.0.0.1 default=0.0.0.0 label="Слушать на" label_en="Listen on" hint="127.0.0.1 — только через SSH-туннель или reverse proxy" hint_en="127.0.0.1 = only through an SSH tunnel or a reverse proxy"
+#
+# @result KUMA_URL label="Адрес Uptime Kuma" label_en="Uptime Kuma URL" value="http://${SSHM_HOST}:${KUMA_PORT}"
+# @result KUMA_PORT label="Порт Uptime Kuma" label_en="Uptime Kuma port" value="${KUMA_PORT}" monitor="Uptime Kuma"
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "${KUMA_BIND:-0.0.0.0}:${KUMA_PORT:-3001}:3001"
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: local
+      options:
+        max-size: 2m
+        max-file: "3"

@@ -8,7 +8,9 @@ public sealed class SettingsService
 {
     private static readonly JsonSerializerOptions Options = new(VaultService.Json) { WriteIndented = true };
 
-    public AppSettings Settings { get; private set; } = new();
+    public const int CurrentVersion = 1;
+
+    public AppSettings Settings { get; private set; } = new() { SettingsVersion = CurrentVersion };
     public bool IsFirstRun { get; private set; }
 
     public void Load()
@@ -16,7 +18,7 @@ public sealed class SettingsService
         if (!File.Exists(AppPaths.SettingsFile))
         {
             IsFirstRun = true;
-            Settings = new AppSettings();
+            Settings = new AppSettings { SettingsVersion = CurrentVersion };
             return;
         }
         try
@@ -26,8 +28,18 @@ public sealed class SettingsService
         }
         catch (JsonException)
         {
-            Settings = new AppSettings();
+            Settings = new AppSettings { SettingsVersion = CurrentVersion };
         }
+        Migrate(Settings);
+    }
+
+    /// <summary>Upgrades settings written by older versions (in place).</summary>
+    public static bool Migrate(AppSettings s)
+    {
+        if (s.SettingsVersion >= CurrentVersion) return false;
+        if (s.SettingsVersion < 1 && s.MonitorIntervalMinutes == 10) s.MonitorIntervalMinutes = 5; // old default
+        s.SettingsVersion = CurrentVersion;
+        return true;
     }
 
     public void Save() => File.WriteAllText(AppPaths.SettingsFile, JsonSerializer.Serialize(Settings, Options));

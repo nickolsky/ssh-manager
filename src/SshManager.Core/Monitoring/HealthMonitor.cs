@@ -19,7 +19,9 @@ public enum HealthState
     NotChecked,
 }
 
-public sealed record ServerHealth(HealthState State, int? LatencyMs = null, DateTime? Checked = null, string? Error = null)
+/// <param name="SshDown">Online only because a monitored port answered; sshd did not.</param>
+public sealed record ServerHealth(HealthState State, int? LatencyMs = null, DateTime? Checked = null, string? Error = null,
+    bool SshDown = false)
 {
     public static readonly ServerHealth Unknown = new(HealthState.Unknown);
 }
@@ -29,8 +31,9 @@ public sealed record HealthTransition(Guid ServerId, ServerHealth Before, Server
 public sealed record PortTransition(Guid ServerId, MonitoredPort Port, ServerHealth After);
 
 /// <summary>
-/// Periodically opens a TCP connection to each server's SSH port and reads the "SSH-" banner.
-/// ICMP is not used: VPN hosts often drop it.
+/// Periodically opens a TCP connection to each server's SSH port and reads the "SSH-" banner, and connects to its
+/// monitored ports. The server counts as up when SSH or any monitored port answers (a VPN box may firewall SSH).
+/// ICMP is not used: VPN hosts often drop it. Every check is written to the <see cref="UptimeLog"/>.
 /// </summary>
 public sealed class HealthMonitor : IDisposable
 {
@@ -39,6 +42,7 @@ public sealed class HealthMonitor : IDisposable
 
     private readonly VaultService _vault;
     private readonly SettingsService _settings;
+    private readonly UptimeLog? _log;
     private readonly ConcurrentDictionary<Guid, ServerHealth> _health = new();
     private readonly ConcurrentDictionary<Guid, IReadOnlyDictionary<int, ServerHealth>> _ports = new();
     private readonly ConcurrentDictionary<Guid, DateTime> _due = new();
@@ -46,10 +50,11 @@ public sealed class HealthMonitor : IDisposable
     private readonly SemaphoreSlim _gate = new(8);
     private Timer? _timer;
 
-    public HealthMonitor(VaultService vault, SettingsService settings)
+    public HealthMonitor(VaultService vault, SettingsService settings, UptimeLog? log = null)
     {
         _vault = vault;
         _settings = settings;
+        _log = log;
     }
 
     public event EventHandler<Guid>? HealthChanged;
@@ -144,19 +149,22 @@ public sealed class HealthMonitor : IDisposable
             var ports = new Dictionary<int, ServerHealth>();
             try
             {
-                result = await ProbeWithRetryAsync(s.Host, s.Port, expectSsh: true);
-                if (result.State == HealthState.Online)
-                {
-                    var checks = s.MonitoredPorts.Where(p => p.Port != s.Port).DistinctBy(p => p.Port)
-                        .Select(async p => (p.Port, await ProbeWithRetryAsync(s.Host, p.Port, expectSsh: false)));
-                    foreach (var (port, h) in await Task.WhenAll(checks)) ports[port] = h;
-                    if (s.MonitoredPorts.Any(p => p.Port == s.Port)) ports[s.Port] = result with { Error = null };
-                }
+                var sshCheck = ProbeWithRetryAsync(s.Host, s.Port, expectSsh: true);
+                var checks = s.MonitoredPorts.Where(p => p.Port != s.Port).DistinctBy(p => p.Port)
+                    .Select(async p => (p.Port, await ProbeWithRetryAsync(s.Host, p.Port, expectSsh: false))).ToList();
+                result = await sshCheck;
+                foreach (var (port, h) in await Task.WhenAll(checks)) ports[port] = h;
+                if (s.MonitoredPorts.Any(p => p.Port == s.Port)) ports[s.Port] = result with { Error = null };
+                if (result.State == HealthState.Offline && ports.Values.FirstOrDefault(p => p.State == HealthState.Online) is { } open)
+                    result = new ServerHealth(HealthState.Online, open.LatencyMs, open.Checked,
+                        L.F("Health.SshDownPortUp", result.Error), SshDown: true);
             }
             finally
             {
                 _gate.Release();
             }
+            _log?.Append(s.Id, new UptimeSample(DateTime.UtcNow, result.State == HealthState.Online, !result.SshDown,
+                result.LatencyMs, Math.Max(1, interval <= 0 ? 60 : interval)));
             _due[s.Id] = DateTime.UtcNow + TimeSpan.FromMinutes(Math.Max(1, interval <= 0 ? 60 : interval));
             var previousPorts = GetPorts(s.Id);
             _ports[s.Id] = ports;
@@ -169,7 +177,7 @@ public sealed class HealthMonitor : IDisposable
             }
             if (previous.State == HealthState.Online && result.State == HealthState.Offline)
                 WentDown?.Invoke(this, new HealthTransition(s.Id, previous, result));
-            if (result.State == HealthState.Online) ServerOnline?.Invoke(this, s);
+            if (result.State == HealthState.Online && !result.SshDown) ServerOnline?.Invoke(this, s);
         }
         finally
         {

@@ -89,6 +89,116 @@ public class E2ETests
         Assert.Contains("gone", client.RunCommand($"test -e {file} || echo gone").Result);
     }
 
+    /// <summary>
+    /// In-app script run: parameters as env vars, output streamed, results collected, temp files removed.
+    /// With SSHM_E2E_SUDO=user:password also runs as a sudo user (password fed on stdin).
+    /// </summary>
+    [Fact]
+    public async Task Script_Runs_In_App_With_Params_And_Results()
+    {
+        if (Target() is not { } t) return;
+        using var tmp = new TempDir();
+        var vault = new VaultService(tmp.File("vault.dat"));
+        vault.Create("password123");
+        var root = new ServerEntry { Name = "e2e", Host = t.Host, Port = t.Port, Username = t.User, Password = t.Password };
+        vault.Update(d => d.Servers.Add(root));
+        var ssh = new SshClientFactory(vault, new KnownHostsService(tmp.File("known_hosts"))) { ConfirmHostKey = _ => true };
+        var runner = new Core.Scripts.ScriptRunner(ssh, null!);
+        var script = new ScriptEntry
+        {
+            Name = "demo",
+            UseSudo = true,
+            Body = """
+                #!/usr/bin/env bash
+                # @param GREETING text default=hi
+                set -euo pipefail
+                echo "start $GREETING on $SSHM_SERVER_NAME as $(id -un)"
+                for i in 1 2 3; do echo "step $i"; sleep 0.3; done
+                echo "to stderr" >&2
+                printf 'URL=vless://id@host:443?x=1#%s\n' "$SSHM_SERVER_NAME" >> "$SSHM_RESULT"
+                echo "WHO=$(id -un)" >> "$SSHM_RESULT"
+                echo "SELF=$0" >> "$SSHM_RESULT"
+                exit 3
+                """,
+        };
+
+        async Task<Core.Scripts.ScriptRunResult> Run(ServerEntry s, Dictionary<string, string> values, List<string> chunks) =>
+            await runner.RunAsync(s, script, values, c => { lock (chunks) chunks.Add(c); }, CancellationToken.None);
+
+        var chunks = new List<string>();
+        var r = await Run(root, new() { ["GREETING"] = "it's me" }, chunks);
+        var shown = string.Concat(chunks);
+        Assert.Equal(3, r.ExitCode);
+        Assert.Contains("start it's me on e2e as root", shown);
+        Assert.Contains("step 3", shown);
+        Assert.Contains("to stderr", shown);
+        Assert.DoesNotContain(Core.Scripts.ScriptRunner.ResultMarker, shown);
+        Assert.DoesNotContain("URL=", shown);
+        Assert.Equal("vless://id@host:443?x=1#e2e", r.Results["URL"]);
+        Assert.Equal("root", r.Results["WHO"]);
+        using (var client = ssh.Connect(root))
+        {
+            var self = r.Results["SELF"];
+            var stem = self[..^3];
+            Assert.Contains("gone", client.RunCommand($"test -e {self} -o -e {stem}.env -o -e {stem}.result || echo gone").Result);
+        }
+
+        // cancelling stops the run
+        var slow = script.Clone();
+        slow.Body = "echo begin; sleep 30; echo never";
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var cancelled = new List<string>();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            runner.RunAsync(root, slow, new Dictionary<string, string>(), c => { lock (cancelled) cancelled.Add(c); }, cts.Token));
+        Assert.Contains("begin", string.Concat(cancelled));
+
+        // compose script against a stub "docker" (only on targets without a real one)
+        using (var c = ssh.Connect(root))
+        {
+            if (c.RunCommand("command -v docker").ExitStatus != 0)
+            {
+                c.RunCommand("printf '#!/bin/sh\\necho \"docker $*\" >> /tmp/sshm-fake-docker.log\\n' > /usr/local/bin/docker && chmod +x /usr/local/bin/docker");
+                try
+                {
+                    var compose = new ScriptEntry
+                    {
+                        Name = "Demo compose",
+                        Kind = ScriptKind.Compose,
+                        Body = "# @project sshm-e2e-demo\n# @param APP_PORT number default=8080\n# @param SECRET_X secret\n" +
+                               "services:\n  app:\n    image: nginx:alpine\n    ports: [\"${APP_PORT}:80\"]\n",
+                    };
+                    var cr = await runner.RunAsync(root, compose, new Dictionary<string, string> { ["APP_PORT"] = "9090", ["SECRET_X"] = "it's $ecret" },
+                        _ => { }, CancellationToken.None);
+                    Assert.True(cr.ExitCode == 0, cr.Output);
+                    Assert.Contains("image: nginx:alpine", c.RunCommand("cat /opt/sshm-e2e-demo/docker-compose.yml").Result);
+                    var env = c.RunCommand("cat /opt/sshm-e2e-demo/.env; stat -c %a /opt/sshm-e2e-demo/.env").Result;
+                    Assert.Contains("APP_PORT='9090'", env);
+                    Assert.Contains("SECRET_X=\"it's $$ecret\"", env);
+                    Assert.EndsWith("600", env.Trim());
+                    var calls = c.RunCommand("cat /tmp/sshm-fake-docker.log").Result;
+                    Assert.Contains("docker compose pull", calls);
+                    Assert.Contains("docker compose up -d --remove-orphans", calls);
+                }
+                finally
+                {
+                    c.RunCommand("rm -rf /usr/local/bin/docker /tmp/sshm-fake-docker.log /opt/sshm-e2e-demo");
+                }
+            }
+        }
+
+        if (Environment.GetEnvironmentVariable("SSHM_E2E_SUDO") is { Length: > 0 } sudo)
+        {
+            var p = sudo.Split(':', 2);
+            var user = new ServerEntry { Name = "e2e-sudo", Host = t.Host, Port = t.Port, Username = p[0], Password = p[1] };
+            vault.Update(d => d.Servers.Add(user));
+            var userChunks = new List<string>();
+            var ur = await Run(user, new() { ["GREETING"] = "x" }, userChunks);
+            Assert.Equal(3, ur.ExitCode);
+            Assert.Equal("root", ur.Results["WHO"]);
+            Assert.DoesNotContain(p[1], string.Concat(userChunks));
+        }
+    }
+
     [Fact]
     public async Task Password_Then_KeySetup_Then_Agent_And_AskPass_Sessions()
     {

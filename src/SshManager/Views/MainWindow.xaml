@@ -68,6 +68,26 @@
             </Style.Triggers>
         </Style>
 
+        <Style x:Key="MiAttribute" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="attribute">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="UptimeText" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding UptimeLevel}" Value="warn">
+                    <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCautionBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding UptimeLevel}" Value="bad">
+                    <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="MiPortOn" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
             <Setter Property="Visibility" Value="Collapsed" />
             <Style.Triggers>
@@ -279,6 +299,28 @@
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
+                                <GridViewColumn Header="{l:Tr Col.Disk}" Width="150">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel x:Name="Panel" Orientation="Horizontal" ToolTip="{Binding UsageTip}" Background="Transparent">
+                                                <ProgressBar Style="{StaticResource UsageBar}" Value="{Binding DiskPercent, Mode=OneWay}" Tag="{Binding DiskLevel}" />
+                                                <TextBlock Text="{Binding Disk}" Style="{StaticResource CellText}" />
+                                            </StackPanel>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding DiskPercent}" Value="{x:Null}">
+                                                    <Setter TargetName="Panel" Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="{l:Tr Col.Uptime}" Width="170">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Uptime}" ToolTip="{Binding UptimeTip}" Style="{StaticResource UptimeText}" />
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
                                 <GridViewColumn Header="{l:Tr Col.Ports}" Width="130">
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
@@ -350,12 +392,14 @@
                                     <Separator Style="{StaticResource SepServer}" />
                                     <MenuItem Header="{l:Tr Ctx.Install}" Style="{StaticResource MiServer}"
                                               ItemsSource="{Binding InstallItems}" ItemContainerStyle="{StaticResource InstallItem}" />
+                                    <MenuItem Header="{l:Tr Ctx.InstallDocker}" Command="{Binding InstallDockerCommand}" Style="{StaticResource MiServer}" />
                                     <MenuItem Header="{l:Tr Ctx.PortForwards}" Command="{Binding PortForwardsCommand}" Style="{StaticResource MiForward}" />
                                     <MenuItem Header="{l:Tr Ctx.MonitorPort}" Command="{Binding TogglePortCommand}" FontWeight="SemiBold" Style="{StaticResource MiPortOff}" />
                                     <MenuItem Header="{l:Tr Ctx.UnmonitorPort}" Command="{Binding TogglePortCommand}" Style="{StaticResource MiPortOn}" />
                                     <MenuItem Header="{l:Tr Ctx.PortMonitor}" Command="{Binding PortMonitorCommand}" Style="{StaticResource MiPorts}" />
                                     <MenuItem Header="{l:Tr Ctx.RefreshInfo}" Command="{Binding RefreshInfoCommand}" Style="{StaticResource MiServer}" />
                                     <MenuItem Header="{l:Tr Ctx.CheckNow}" Command="{Binding CheckNowCommand}" Style="{StaticResource MiServer}" />
+                                    <MenuItem Header="{l:Tr Ctx.UptimeHistory}" Command="{Binding UptimeHistoryCommand}" Style="{StaticResource MiServer}" />
                                     <Separator Style="{StaticResource SepServer}" />
                                     <MenuItem Header="{l:Tr Ctx.Edit}" Command="{Binding EditServerCommand}" Style="{StaticResource MiServer}" />
                                     <MenuItem Header="{l:Tr Ctx.Duplicate}" Command="{Binding DuplicateServerCommand}" Style="{StaticResource MiServer}" />
@@ -372,6 +416,9 @@
                                     <MenuItem Header="{l:Tr Ctx.ServiceStatus}" Command="{Binding ServiceStatusCommand}" FontWeight="SemiBold" Style="{StaticResource MiService}" />
                                     <MenuItem Header="{l:Tr Ctx.ServiceLogs}" Command="{Binding ServiceLogsCommand}" Style="{StaticResource MiService}" />
                                     <MenuItem Header="{l:Tr Ctx.ServiceRestart}" Command="{Binding ServiceRestartCommand}" Style="{StaticResource MiService}" />
+
+                                    <MenuItem Header="{l:Tr Ctx.CopyValue}" Command="{Binding CopyAttributeCommand}" FontWeight="SemiBold" Style="{StaticResource MiAttribute}" />
+                                    <MenuItem Header="{l:Tr Ctx.DeleteAttribute}" Command="{Binding DeleteAttributeCommand}" Style="{StaticResource MiAttribute}" />
 
                                     <MenuItem Header="{l:Tr Ctx.AddServer}" Command="{Binding AddServerCommand}" Style="{StaticResource MiGroup}" />
                                     <MenuItem Header="{l:Tr Menu.ExpandAll}" Command="{Binding ExpandAllCommand}" Style="{StaticResource MiGroup}" />
@@ -485,16 +532,31 @@
                                 <DockPanel>
                                     <WrapPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
                                         <Button Content="{l:Tr Scripts.Add}" Command="{Binding AddScriptCommand}" Style="{StaticResource ToolbarButton}" Padding="10,4" />
+                                        <Button Content="{l:Tr Scripts.AddCompose}" Command="{Binding AddComposeCommand}" Style="{StaticResource ToolbarButton}" Padding="10,4"
+                                                ToolTip="{l:Tr Scripts.AddComposeTip}" />
                                         <Button Content="{l:Tr Scripts.Duplicate}" Command="{Binding DuplicateScriptCommand}" Style="{StaticResource ToolbarButton}" Padding="10,4" />
                                         <Button Content="{l:Tr Scripts.Delete}" Command="{Binding DeleteScriptCommand}" Style="{StaticResource ToolbarButton}" Padding="10,4" />
+                                        <Button Content="{l:Tr Scripts.RestoreBuiltins}" Command="{Binding RestoreBuiltinsCommand}" Style="{StaticResource ToolbarButton}"
+                                                Padding="10,4" Margin="0,6,0,0" ToolTip="{l:Tr Scripts.RestoreBuiltinsTip}" />
                                     </WrapPanel>
                                     <ListBox ItemsSource="{Binding Scripts}" SelectedItem="{Binding SelectedScript}">
                                         <ListBox.ItemTemplate>
                                             <DataTemplate>
                                                 <StackPanel>
-                                                    <TextBlock Text="{Binding Name}" />
-                                                    <TextBlock Text="{Binding OsFilter}" FontSize="11" Opacity="0.6" />
+                                                    <TextBlock Text="{Binding Name}" TextWrapping="Wrap" />
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Border x:Name="BuiltinTag" CornerRadius="3" Padding="4,0" Margin="0,1,6,0" VerticalAlignment="Center"
+                                                                Background="{DynamicResource ControlStrongFillColorDisabledBrush}">
+                                                            <TextBlock Text="{l:Tr Scripts.BuiltinTag}" FontSize="10" />
+                                                        </Border>
+                                                        <TextBlock Text="{Binding OsFilter}" FontSize="11" Opacity="0.75" VerticalAlignment="Center" />
+                                                    </StackPanel>
                                                 </StackPanel>
+                                                <DataTemplate.Triggers>
+                                                    <DataTrigger Binding="{Binding BuiltinId}" Value="{x:Null}">
+                                                        <Setter TargetName="BuiltinTag" Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </DataTemplate.Triggers>
                                             </DataTemplate>
                                         </ListBox.ItemTemplate>
                                     </ListBox>
@@ -512,12 +574,60 @@
                                         </StackPanel>
                                         <StackPanel Grid.Column="2">
                                             <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Scripts.OsFilter}" Margin="0,0,0,4" />
-                                            <TextBox Text="{Binding ScriptOsFilter, UpdateSourceTrigger=PropertyChanged}" ToolTip="{l:Tr Scripts.OsFilterTip}" />
+                                            <!-- multi-select drop-down of os-release IDs -->
+                                            <Grid>
+                                                <ToggleButton x:Name="OsToggle" HorizontalContentAlignment="Stretch" Padding="11,5,10,6"
+                                                              ToolTip="{Binding ScriptOsSummary}">
+                                                    <ToggleButton.Style>
+                                                        <Style TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}">
+                                                            <Style.Triggers>
+                                                                <!-- a click on the button while open would close and reopen the popup -->
+                                                                <DataTrigger Binding="{Binding IsOpen, ElementName=OsPopup}" Value="True">
+                                                                    <Setter Property="IsHitTestVisible" Value="False" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </ToggleButton.Style>
+                                                    <DockPanel>
+                                                        <TextBlock DockPanel.Dock="Right" Text="&#xE70D;" FontFamily="{StaticResource IconFont}" FontSize="10"
+                                                                   VerticalAlignment="Center" Margin="8,0,0,0" />
+                                                        <TextBlock Text="{Binding ScriptOsSummary}" TextTrimming="CharacterEllipsis" />
+                                                    </DockPanel>
+                                                </ToggleButton>
+                                                <Popup x:Name="OsPopup" IsOpen="{Binding IsChecked, ElementName=OsToggle}" StaysOpen="False"
+                                                       PlacementTarget="{Binding ElementName=OsToggle}" Placement="Bottom" AllowsTransparency="True">
+                                                    <Border Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" BorderThickness="1"
+                                                            BorderBrush="{DynamicResource SurfaceStrokeColorFlyoutBrush}" CornerRadius="6" Padding="10,8"
+                                                            Margin="0,4,0,0" MinWidth="{Binding ActualWidth, ElementName=OsToggle}">
+                                                        <StackPanel>
+                                                            <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto">
+                                                                <ItemsControl ItemsSource="{Binding OsOptions}">
+                                                                    <ItemsControl.ItemTemplate>
+                                                                        <DataTemplate>
+                                                                            <CheckBox Content="{Binding Label}" IsChecked="{Binding IsChecked}" Margin="0,1" ToolTip="{Binding Id}" />
+                                                                        </DataTemplate>
+                                                                    </ItemsControl.ItemTemplate>
+                                                                </ItemsControl>
+                                                            </ScrollViewer>
+                                                            <DockPanel Margin="0,8,0,0">
+                                                                <Button DockPanel.Dock="Right" Content="{l:Tr Scripts.AddOs}" Command="{Binding AddOsCommand}" Margin="6,0,0,0" />
+                                                                <TextBox Text="{Binding NewOsId, UpdateSourceTrigger=PropertyChanged}" ToolTip="{l:Tr Scripts.OsFilterTip}" />
+                                                            </DockPanel>
+                                                            <TextBlock Style="{StaticResource Hint}" Text="{l:Tr Scripts.OsHint}" Margin="0,6,0,0" MaxWidth="360" HorizontalAlignment="Left" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </Popup>
+                                            </Grid>
                                         </StackPanel>
                                     </Grid>
                                     <DockPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
                                         <Button DockPanel.Dock="Right" Content="{l:Tr Scripts.Save}" Command="{Binding SaveScriptCommand}"
                                                 Style="{DynamicResource AccentButtonStyle}" MinWidth="110" />
+                                        <ComboBox DockPanel.Dock="Right" SelectedIndex="{Binding ScriptKindIndex}" Width="170" Margin="0,0,10,0"
+                                                  ToolTip="{l:Tr Scripts.KindTip}">
+                                            <ComboBoxItem Content="Bash" />
+                                            <ComboBoxItem Content="Docker Compose" />
+                                        </ComboBox>
                                         <CheckBox Content="{l:Tr Scripts.UseSudo}" IsChecked="{Binding ScriptUseSudo}" VerticalAlignment="Center" />
                                     </DockPanel>
                                     <TextBox Margin="0,8,0,0" Text="{Binding ScriptBody, UpdateSourceTrigger=PropertyChanged}"

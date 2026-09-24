@@ -61,9 +61,18 @@ public abstract class TreeNode(int level) : ObservableObject
     public virtual string Cpu => "";
     public virtual double? MemPercent => null;
     public virtual string Mem => "";
+    public virtual double? DiskPercent => null;
+    /// <summary>Free space on /.</summary>
+    public virtual string Disk => "";
     /// <summary>Usage bar color: ok, warn or bad.</summary>
     public string CpuLevel => UsageLevel(CpuPercent);
     public string MemLevel => UsageLevel(MemPercent);
+    public string DiskLevel => DiskPercent switch { >= 95 => "bad", >= 85 => "warn", _ => "ok" };
+    /// <summary>"99.9 · 99.5 · 98.7 %" for day / week / month.</summary>
+    public virtual string Uptime => "";
+    public virtual string? UptimeTip => null;
+    /// <summary>ok / warn / bad by the daily uptime; empty = no data.</summary>
+    public virtual string UptimeLevel => "";
     public virtual string? UsageTip => null;
     /// <summary>Monitored ports shown as small chips in the server row.</summary>
     public virtual IReadOnlyList<PortChip> PortChips => [];
@@ -243,6 +252,46 @@ public sealed class ServerNode : TreeNode
 
     public override string Mem => Metrics is { MemTotalKb: { } total, MemAvailableKb: { } avail } ? Pair(total - avail, total) : "";
 
+    public override double? DiskPercent => Metrics?.DiskPercent;
+
+    public override string Disk => Metrics is { DiskTotalKb: { } total, DiskUsedKb: { } used }
+        ? L.F("Metrics.DiskFree", Gb(Math.Max(0, total - used)))
+        : "";
+
+    public UptimeStats? UptimeStats { get; private set; }
+
+    public override string Uptime => UptimeStats is { } u && (u.Day ?? u.Week ?? u.Month) != null
+        ? $"{Pct(u.Day)} · {Pct(u.Week)} · {Pct(u.Month)}"
+        : "";
+
+    public override string? UptimeTip => UptimeStats is { } u && Uptime.Length > 0
+        ? L.F("Uptime.Tip", Pct(u.Day), Pct(u.Week), Pct(u.Month))
+        : null;
+
+    public override string UptimeLevel => (UptimeStats?.Day ?? UptimeStats?.Week) switch
+    {
+        null => "",
+        >= 99.5 => "ok",
+        >= 95 => "warn",
+        _ => "bad",
+    };
+
+    /// <summary>100 → "100", 99.95 → "99.9" (never rounds up to a perfect score).</summary>
+    public static string Pct(double? p) => p switch
+    {
+        null => "—",
+        >= 100 => "100%",
+        _ => (Math.Floor(p.Value * 10) / 10).ToString("0.0", L.Culture) + "%",
+    };
+
+    public void SetUptime(UptimeStats stats)
+    {
+        UptimeStats = stats;
+        OnPropertyChanged(nameof(Uptime));
+        OnPropertyChanged(nameof(UptimeTip));
+        OnPropertyChanged(nameof(UptimeLevel));
+    }
+
     /// <summary>"1.2 / 3.8 GB" or "830 / 977 MB" — one unit keeps the column narrow.</summary>
     private static string Pair(long usedKb, long totalKb) => totalKb >= 1024 * 1024
         ? $"{(usedKb / 1048576.0).ToString("0.#", L.Culture)} / {(totalKb / 1048576.0).ToString("0.#", L.Culture)} GB"
@@ -278,6 +327,9 @@ public sealed class ServerNode : TreeNode
         OnPropertyChanged(nameof(MemPercent));
         OnPropertyChanged(nameof(Mem));
         OnPropertyChanged(nameof(MemLevel));
+        OnPropertyChanged(nameof(DiskPercent));
+        OnPropertyChanged(nameof(Disk));
+        OnPropertyChanged(nameof(DiskLevel));
         OnPropertyChanged(nameof(UsageTip));
     }
 
@@ -307,6 +359,7 @@ public sealed class ServerNode : TreeNode
         Children.Clear();
         var f = Entry.Facts;
         var level = Level + 1;
+        AddAttributes();
         if (f?.InventoryUpdated == null)
         {
             Children.Add(new InfoNode(level, Loading ? L.Get("Tree.Loading") : f?.InventoryError ?? L.Get("Tree.NoData"), this));
@@ -338,6 +391,14 @@ public sealed class ServerNode : TreeNode
         }
 
         AddPorts(f);
+    }
+
+    /// <summary>Values returned by scripts (VLESS links etc.), first so they are easy to find.</summary>
+    private void AddAttributes()
+    {
+        if (Entry.Attributes.Count == 0) return;
+        var section = Section("attrs", L.F("Tree.AttributesSection", Entry.Attributes.Count), "");
+        foreach (var a in Entry.Attributes) section.Children.Add(new AttributeNode(Level + 2, a, section));
     }
 
     /// <summary>Monitored ports plus the ones the server listens on (so they can be switched on for monitoring).</summary>
@@ -451,6 +512,22 @@ public sealed class ForwardNode : TreeNode
     public override string Icon => Forward == null ? "" : ""; // back / forward arrows
     public override string Address => Forward == null ? "" : Forward.Managed ? "SSH Manager" : L.Get("Fwd.External");
     public override bool IsMuted => Forward == null;
+}
+
+public sealed class AttributeNode : TreeNode
+{
+    public AttributeNode(int level, ServerAttribute attribute, TreeNode parent) : base(level)
+    {
+        Attribute = attribute;
+        Parent = parent;
+    }
+
+    public ServerAttribute Attribute { get; }
+    public override string Title => Attribute.Label;
+    public override string Icon => ""; // copy
+    public override string Address => Attribute.Value.ReplaceLineEndings(" ");
+    public override string? Tip => Attribute.Value + "\n\n" +
+                                   L.F("Attr.Tip", Attribute.Source ?? "—", Attribute.Updated.ToString("g", L.Culture));
 }
 
 public sealed class PortNode : TreeNode

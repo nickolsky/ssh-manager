@@ -45,7 +45,7 @@ public sealed partial class AppHost : IDisposable
         KeySetup = new KeySetupService(Vault, Ssh);
         Inventory = new ServerInventoryService(Vault, Ssh);
         Geo = new GeoIpService(Vault, SettingsStore);
-        Health = new HealthMonitor(Vault, SettingsStore);
+        Health = new HealthMonitor(Vault, SettingsStore, Uptime);
         Metrics = new MetricsCollector(Ssh);
         Forwards = new PortForwardService(Vault, Ssh);
         Backup = new BackupService(Vault, SettingsStore, Ssh);
@@ -77,6 +77,7 @@ public sealed partial class AppHost : IDisposable
     public ServerInventoryService Inventory { get; }
     public GeoIpService Geo { get; }
     public HealthMonitor Health { get; }
+    public UptimeLog Uptime { get; } = new();
     public MetricsCollector Metrics { get; }
     public PortForwardService Forwards { get; }
     public BackupService Backup { get; }
@@ -200,11 +201,30 @@ public sealed partial class AppHost : IDisposable
         }
         else
         {
+            SyncBuiltinScripts();
             Health.Start();
             RefreshBackground(force: false);
         }
         _tray?.UpdateState();
         StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Adds the scripts shipped with the app and updates the ones the user did not edit.</summary>
+    private void SyncBuiltinScripts()
+    {
+        try
+        {
+            var pending = Vault.Read(d =>
+            {
+                var copy = new VaultData { Scripts = d.Scripts.Select(s => s.Clone()).ToList(), RemovedBuiltins = [.. d.RemovedBuiltins] };
+                return BuiltinScripts.Sync(copy);
+            });
+            if (pending) Vault.Update(d => BuiltinScripts.Sync(d), backup: false);
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
+        {
+            // a vault that cannot be saved right now gets them on the next unlock
+        }
     }
 
     /// <summary>
