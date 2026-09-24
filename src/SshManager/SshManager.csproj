@@ -38,6 +38,8 @@
   <ItemGroup>
     <!-- built-in terminal page (xterm.js), served to WebView2 from the app folder -->
     <Content Include="Assets\terminal\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- built-in editor page (CodeMirror 6, bundle built from tools\codemirror) -->
+    <Content Include="Assets\editor\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

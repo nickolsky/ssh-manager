@@ -224,6 +224,12 @@
                                 <Button Command="{Binding ConnectCommand}" Style="{DynamicResource AccentButtonStyle}" Margin="0,0,6,0" Padding="14,5">
                                     <TextBlock><Run Text="▶  " /><Run Text="{l:Tr Main.Connect}" /></TextBlock>
                                 </Button>
+                                <Button Command="{Binding FilesCommand}" Style="{StaticResource ToolbarButton}" ToolTip="{l:Tr Main.FilesTip}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE8B7;" FontFamily="{StaticResource IconFont}" Margin="0,1,6,0" />
+                                        <TextBlock Text="{l:Tr Main.Files}" />
+                                    </StackPanel>
+                                </Button>
                                 <Button Content="{l:Tr Main.AddServer}" Command="{Binding AddServerCommand}" Style="{StaticResource ToolbarButton}" ToolTip="Ctrl+N" />
                                 <Button Content="{l:Tr Main.Edit}" Command="{Binding EditServerCommand}" Style="{StaticResource ToolbarButton}" />
                                 <Button Command="{Binding SetupKeyCommand}" Style="{StaticResource ToolbarButton}" ToolTip="{l:Tr Main.SetupKeyTip}">
@@ -405,6 +411,7 @@
                             <c:TreeListView.ContextMenu>
                                 <ContextMenu>
                                     <MenuItem Header="{l:Tr Ctx.Connect}" Command="{Binding ConnectCommand}" FontWeight="SemiBold" Style="{StaticResource MiServer}" />
+                                    <MenuItem Header="{l:Tr Ctx.Files}" Command="{Binding FilesCommand}" Style="{StaticResource MiServer}" />
                                     <Separator Style="{StaticResource SepServer}" />
                                     <MenuItem Header="{l:Tr Ctx.Install}" Style="{StaticResource MiServer}"
                                               ItemsSource="{Binding InstallItems}" ItemContainerStyle="{StaticResource InstallItem}" />
@@ -745,6 +752,10 @@
                                 <ComboBoxItem Content="{l:Tr Settings.BuiltIn}" />
                             </ComboBox>
                             <TextBlock Style="{StaticResource Hint}" Text="{Binding TerminalInfo}" Margin="0,4,0,0" />
+                            <CheckBox Content="{l:Tr Settings.TermIntegration}" IsChecked="{Binding TerminalIntegration}" Margin="0,10,0,0" />
+                            <CheckBox Content="{l:Tr Settings.TermAutoSuggest}" IsChecked="{Binding TerminalAutoSuggest}" Margin="0,4,0,0"
+                                      IsEnabled="{Binding TerminalIntegration}" />
+                            <TextBlock Style="{StaticResource Hint}" Text="{l:Tr Settings.TermSuggestHint}" Margin="0,4,0,0" />
                             <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Settings.WtProfile}" />
                             <TextBox Width="360" HorizontalAlignment="Left" Text="{Binding WindowsTerminalProfile, UpdateSourceTrigger=LostFocus}" />
                             <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Settings.SshPath}" />

@@ -1,0 +1,31 @@
+<Window x:Class="SshManager.Views.ConflictWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:SshManager.Localization"
+        Title="{l:Tr Files.ConflictTitle}" Width="560" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <StackPanel Margin="24,16,24,20">
+        <TextBlock x:Name="Header" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <Grid Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition />
+                <RowDefinition />
+            </Grid.RowDefinitions>
+            <TextBlock Text="{l:Tr Files.ConflictNew}" Style="{StaticResource Hint}" Margin="0,0,14,4" />
+            <TextBlock x:Name="NewInfo" Grid.Column="1" Margin="0,0,0,4" />
+            <TextBlock Grid.Row="1" Text="{l:Tr Files.ConflictExisting}" Style="{StaticResource Hint}" Margin="0,0,14,0" />
+            <TextBlock x:Name="OldInfo" Grid.Row="1" Grid.Column="1" />
+        </Grid>
+        <WrapPanel HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Content="{l:Tr Files.Overwrite}" Click="OnOverwrite" Style="{DynamicResource AccentButtonStyle}" MinWidth="100" Margin="0,0,8,0" IsDefault="True" />
+            <Button Content="{l:Tr Files.OverwriteAll}" Click="OnOverwriteAll" MinWidth="100" Margin="0,0,8,0" />
+            <Button Content="{l:Tr Files.Skip}" Click="OnSkip" MinWidth="90" Margin="0,0,8,0" />
+            <Button Content="{l:Tr Files.SkipAll}" Click="OnSkipAll" MinWidth="100" Margin="0,0,8,0" />
+            <Button Content="{l:Tr Common.Cancel}" IsCancel="True" MinWidth="90" />
+        </WrapPanel>
+    </StackPanel>
+</Window>

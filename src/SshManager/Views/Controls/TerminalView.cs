@@ -9,6 +9,7 @@ using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using SshManager.Core.Ssh;
+using SshManager.Core.Terminal;
 
 namespace SshManager.Views.Controls;
 
@@ -24,6 +25,9 @@ public sealed class TerminalView : Border, IDisposable
     private readonly WebView2 _web = new();
     private readonly Func<TerminalSession> _createSession;
     private readonly string? _command;
+    private readonly bool _autoSuggest;
+    private TerminalAssist? _assist;
+    private CancellationTokenSource? _completing;
     private readonly StringBuilder _pending = new();
     private readonly DispatcherTimer _flush;
     private TerminalSession? _session;
@@ -34,10 +38,12 @@ public sealed class TerminalView : Border, IDisposable
 
     /// <param name="createSession">New session for this tab (also used to reconnect).</param>
     /// <param name="command">Typed into the shell after connecting (quick actions).</param>
-    public TerminalView(Func<TerminalSession> createSession, string? command)
+    /// <param name="autoSuggest">Show the suggestion list while typing (otherwise on Ctrl+Space only).</param>
+    public TerminalView(Func<TerminalSession> createSession, string? command, bool autoSuggest = true)
     {
         _createSession = createSession;
         _command = command;
+        _autoSuggest = autoSuggest;
         Child = _web;
         _web.DefaultBackgroundColor = System.Drawing.Color.Transparent;
         _flush = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(12) };
@@ -51,6 +57,11 @@ public sealed class TerminalView : Border, IDisposable
     public event Action<string>? TitleChanged;
     /// <summary>Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Shift+W, Ctrl+Shift+T from inside the terminal.</summary>
     public event Action<string>? KeyCommand;
+    /// <summary>"edit FILE" in the shell: an absolute remote path.</summary>
+    public event Action<string>? EditRequested;
+
+    /// <summary>The shell's working directory (with the shell integration), null when unknown.</summary>
+    public string? Cwd => _assist?.Cwd;
 
     public TerminalState State { get; private set; } = TerminalState.Connecting;
 
@@ -60,7 +71,8 @@ public sealed class TerminalView : Border, IDisposable
         Post(new { t = "focus" });
     }
 
-    private static Task<CoreWebView2Environment> Environment() =>
+    /// <summary>One WebView2 environment (browser process, profile folder) for all terminals and editors.</summary>
+    internal static Task<CoreWebView2Environment> Environment() =>
         _environment ??= CoreWebView2Environment.CreateAsync(null,
             Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "SshManager", "WebView2"));
 
@@ -117,6 +129,7 @@ public sealed class TerminalView : Border, IDisposable
                 _ready = true;
                 (_cols, _rows) = (Math.Max(10, I("cols")), Math.Max(2, I("rows")));
                 SendTheme();
+                Post(new { t = "config", auto = _autoSuggest, hint = L.Get("Term.SuggestHint") });
                 Connect();
                 break;
             case "in":
@@ -146,6 +159,23 @@ public sealed class TerminalView : Border, IDisposable
             case "reconnect":
                 if (State == TerminalState.Closed) Connect();
                 break;
+            case "complete":
+                Complete(I("id"), S("line"), I("cursor"), m.TryGetProperty("explicit", out var ex) && ex.ValueKind == JsonValueKind.True);
+                break;
+            case "cmd":
+                _assist?.AddCommand(S("d"));
+                break;
+            case "cwd":
+                if (_assist != null)
+                {
+                    var first = _assist.Cwd == null;
+                    _assist.Cwd = S("d");
+                    if (first) _assist.Start(); // the integration works: load the server's commands and history
+                }
+                break;
+            case "edit":
+                if (S("d") is { Length: > 1 } path && path.StartsWith('/')) EditRequested?.Invoke(path);
+                break;
         }
     }
 
@@ -161,6 +191,7 @@ public sealed class TerminalView : Border, IDisposable
         session.Output += OnOutput;
         session.Closed += OnClosed;
         _session = session;
+        _assist = new TerminalAssist(session.Server, session.Run);
         Post(new { t = "banner", text = L.F("Term.Connecting", session.Server.Name, session.Server.Display) });
         try
         {
@@ -180,6 +211,27 @@ public sealed class TerminalView : Border, IDisposable
         finally
         {
             _connecting = false;
+        }
+    }
+
+    private async void Complete(int id, string line, int cursor, bool explicitRequest)
+    {
+        var assist = _assist;
+        if (assist == null) return;
+        _completing?.Cancel();
+        var cts = _completing = new CancellationTokenSource();
+        try
+        {
+            var r = await assist.CompleteAsync(line, cursor, explicitRequest, cts.Token);
+            if (cts.IsCancellationRequested || _disposed) return;
+            Post(new
+            {
+                t = "completions", id, ghost = r.Ghost,
+                items = r.Items.Select(i => new { l = i.Label, k = i.Kind, d = i.Detail, del = i.Delete, ins = i.Insert }),
+            });
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or InvalidOperationException)
+        {
         }
     }
 
@@ -253,6 +305,7 @@ public sealed class TerminalView : Border, IDisposable
         if (_disposed) return;
         _disposed = true;
         _flush.Stop();
+        _completing?.Cancel();
         _session?.Dispose();
         _session = null;
         _web.Dispose();

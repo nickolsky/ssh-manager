@@ -1,0 +1,107 @@
+<UserControl x:Class="SshManager.Views.FileManagerView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:l="clr-namespace:SshManager.Localization"
+             xmlns:v="clr-namespace:SshManager.Views">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="Vis" />
+        <Style x:Key="Tool" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+    </UserControl.Resources>
+    <DockPanel Margin="0,10,0,0">
+        <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <Button Style="{StaticResource Tool}" Click="OnCopy" ToolTip="F5">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE8C8;" FontFamily="{StaticResource IconFont}" Margin="0,1,6,0" />
+                    <TextBlock x:Name="CopyText" Text="{l:Tr Files.CopyButton}" />
+                </StackPanel>
+            </Button>
+            <Button Style="{StaticResource Tool}" Click="OnMove" ToolTip="F6">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE8DE;" FontFamily="{StaticResource IconFont}" Margin="0,1,6,0" />
+                    <TextBlock Text="{l:Tr Files.MoveButton}" />
+                </StackPanel>
+            </Button>
+            <Button Style="{StaticResource Tool}" Click="OnNewFolder" ToolTip="F7">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE8F4;" FontFamily="{StaticResource IconFont}" Margin="0,1,6,0" />
+                    <TextBlock Text="{l:Tr Files.NewFolder}" />
+                </StackPanel>
+            </Button>
+            <Button Style="{StaticResource Tool}" Click="OnEdit" ToolTip="F4">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE70F;" FontFamily="{StaticResource IconFont}" Margin="0,1,6,0" />
+                    <TextBlock Text="{l:Tr Files.Edit}" />
+                </StackPanel>
+            </Button>
+            <Button Style="{StaticResource Tool}" Click="OnDelete" ToolTip="F8 / Delete">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE74D;" FontFamily="{StaticResource IconFont}" Margin="0,1,6,0" />
+                    <TextBlock Text="{l:Tr Files.Delete}" />
+                </StackPanel>
+            </Button>
+            <Button Style="{StaticResource Tool}" Click="OnTerminal">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE756;" FontFamily="{StaticResource IconFont}" Margin="0,1,6,0" />
+                    <TextBlock Text="{l:Tr Files.TerminalHere}" />
+                </StackPanel>
+            </Button>
+            <CheckBox x:Name="HiddenBox" Content="{l:Tr Files.ShowHidden}" VerticalAlignment="Center" Margin="8,0,0,0"
+                      Checked="OnHiddenChanged" Unchecked="OnHiddenChanged" Focusable="False" />
+            <TextBlock Text="{l:Tr Files.KeysHint}" Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="16,0,0,0" />
+        </WrapPanel>
+
+        <!-- transfers -->
+        <Border DockPanel.Dock="Bottom" x:Name="TransfersBox" Visibility="Collapsed" Margin="0,8,0,0" Padding="0,6,0,0"
+                BorderThickness="0,1,0,0" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
+            <DockPanel>
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                    <Button DockPanel.Dock="Right" Content="{l:Tr Files.ClearDone}" Click="OnClearDone" Padding="10,3" Focusable="False" />
+                    <TextBlock Text="{l:Tr Files.Transfers}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </DockPanel>
+                <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
+                    <ItemsControl x:Name="TransferList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <DockPanel Margin="0,3">
+                                    <Button DockPanel.Dock="Right" Content="{l:Tr Common.Cancel}" Command="{Binding CancelCommand}" Padding="10,2"
+                                            Margin="8,0,0,0" Focusable="False" Visibility="{Binding IsRunning, Converter={StaticResource Vis}}" />
+                                    <TextBlock DockPanel.Dock="Left" Text="{Binding Title}" Width="260" TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center" ToolTip="{Binding Title}" />
+                                    <ProgressBar DockPanel.Dock="Left" Value="{Binding Percent, Mode=OneWay}" Width="160" Height="6" Margin="8,0"
+                                                 VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding Text}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                               ToolTip="{Binding Text}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource Hint}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Failed}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </DockPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" MinWidth="200" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="*" MinWidth="200" />
+            </Grid.ColumnDefinitions>
+            <v:FilePanelView x:Name="LeftPanel" Grid.Column="0" />
+            <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch" Background="Transparent" Focusable="False" />
+            <v:FilePanelView x:Name="RightPanel" Grid.Column="2" />
+        </Grid>
+    </DockPanel>
+</UserControl>

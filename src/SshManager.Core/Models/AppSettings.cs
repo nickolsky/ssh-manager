@@ -41,6 +41,13 @@ public sealed class AppSettings
     public bool UnlockOnAgentRequest { get; set; } = true;
     public TerminalMode Terminal { get; set; } = TerminalMode.WindowsTerminalTab;
     public string? WindowsTerminalProfile { get; set; }
+    /// <summary>Built-in terminal: load the shell integration (prompt marks, cwd, "edit") for bash / zsh.</summary>
+    public bool TerminalIntegration { get; set; } = true;
+    /// <summary>Built-in terminal: show suggestions while typing (otherwise Ctrl+Space).</summary>
+    public bool TerminalAutoSuggest { get; set; } = true;
+    /// <summary>File manager: last local folder, last remote folder per server id.</summary>
+    public string? FilesLocalDir { get; set; }
+    public Dictionary<string, string> FilesRemoteDirs { get; set; } = [];
     public string? SshPath { get; set; }
     public bool CloseToTray { get; set; } = true;
     public int ServerAliveInterval { get; set; } = 30;

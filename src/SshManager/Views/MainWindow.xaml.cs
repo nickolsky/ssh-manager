@@ -37,7 +37,8 @@ public partial class MainWindow : Window
         Closing += OnClosing;
         Closed += (_, _) =>
         {
-            foreach (var t in TerminalTabs.ToList()) CloseTerminal(t);
+            foreach (var t in ContentTabs.ToList())
+                if (t.Content is IDisposable d) d.Dispose();
             _vm.Dispose();
         };
         Loaded += (_, _) => ServersTree.Focus();
@@ -68,7 +69,8 @@ public partial class MainWindow : Window
             Hide(); // terminals keep running in the hidden window
             return;
         }
-        var open = TerminalTabs.Count(t => ((TerminalView)t.Content).State != TerminalState.Closed);
+        var open = TerminalTabs.Count(t => ((TerminalView)t.Content).State != TerminalState.Closed) +
+                   ContentTabs.Count(t => t.Content is FileManagerView { HasRunningTransfers: true } or EditorView { IsDirty: true });
         if (!_forceClose && open > 0 &&
             MessageBox.Show(this, L.F("Term.CloseAllConfirm", open), AppPaths.ProductTitle, MessageBoxButton.YesNo,
                 MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
@@ -80,19 +82,16 @@ public partial class MainWindow : Window
         if (!_forceClose) _host.Exit();
     }
 
-    // ---------- built-in terminal tabs ----------
+    // ---------- tabs: built-in terminals, file managers, editors ----------
 
     private IEnumerable<TabItem> TerminalTabs => Tabs.Items.OfType<TabItem>().Where(t => t.Content is TerminalView);
+    private IEnumerable<TabItem> ContentTabs => Tabs.Items.OfType<TabItem>().Where(t => t.Content is IDisposable);
 
-    /// <summary>Opens a terminal tab for the server and switches to it.</summary>
-    public void OpenTerminal(ServerEntry server, string? command, string? title)
+    /// <summary>A closable tab (× button, middle click) with a status dot; returns the tab and the dot painter.</summary>
+    private (TabItem Tab, Action<string> Paint, TextBlock Title) AddTab(FrameworkElement content, string title, string? icon, string tooltip)
     {
-        var entry = server.Clone();
-        // leading space: most shells keep it out of the history; clear hides the typed command line
-        var typed = command == null ? null : " clear; " + command;
-        var view = new TerminalView(() => _host.CreateTerminalSession(entry), typed);
         var dot = new System.Windows.Shapes.Ellipse { Width = 8, Height = 8, Margin = new Thickness(0, 1, 8, 0), VerticalAlignment = VerticalAlignment.Center };
-        var text = new TextBlock { Text = title ?? entry.Name, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 220, TextTrimming = TextTrimming.CharacterEllipsis };
+        var text = new TextBlock { Text = title, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 220, TextTrimming = TextTrimming.CharacterEllipsis };
         var close = new Button
         {
             Content = new TextBlock { Text = "\uE711", FontFamily = (FontFamily)FindResource("IconFont"), FontSize = 9 },
@@ -100,15 +99,37 @@ public partial class MainWindow : Window
             Background = Brushes.Transparent, BorderThickness = new Thickness(0), Focusable = false,
             VerticalAlignment = VerticalAlignment.Center, ToolTip = L.Get("Term.CloseTab"),
         };
-        var header = new StackPanel { Orientation = Orientation.Horizontal, Children = { dot, text, close } };
-        var tab = new TabItem { Header = header, Content = view, ToolTip = L.F("Term.TabTip", entry.Name, entry.Display, "") };
-        close.Click += (_, _) => CloseTerminal(tab);
+        var header = new StackPanel { Orientation = Orientation.Horizontal };
+        header.Children.Add(dot);
+        if (icon != null)
+            header.Children.Add(new TextBlock { Text = icon, FontFamily = (FontFamily)FindResource("IconFont"), FontSize = 12, Margin = new Thickness(0, 1, 6, 0), VerticalAlignment = VerticalAlignment.Center });
+        header.Children.Add(text);
+        header.Children.Add(close);
+        var tab = new TabItem { Header = header, Content = content, ToolTip = tooltip };
+        close.Click += (_, _) => CloseTab(tab);
         header.MouseDown += (_, e) =>
         {
-            if (e.ChangedButton == MouseButton.Middle) CloseTerminal(tab);
+            if (e.ChangedButton == MouseButton.Middle) CloseTab(tab);
         };
+        Tabs.Items.Add(tab);
+        Tabs.SelectedItem = tab;
+        if (!IsVisible) Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+        return (tab, brush => dot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, brush), text);
+    }
 
-        void Paint(TerminalState state) => dot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, state switch
+    /// <summary>Opens a terminal tab for the server and switches to it.</summary>
+    /// <param name="cd">Start in this remote folder (an interactive shell, not a command).</param>
+    public void OpenTerminal(ServerEntry server, string? command, string? title, string? cd = null)
+    {
+        var entry = server.Clone();
+        // leading space: most shells keep it out of the history; clear hides the typed command line
+        var typed = command != null ? " clear; " + command : cd != null ? " cd " + Core.Ssh.RemoteShell.Quote(cd) + " && clear" : null;
+        var view = new TerminalView(() => _host.CreateTerminalSession(entry), typed, _host.SettingsStore.Settings.TerminalAutoSuggest);
+        var (tab, paint, _) = AddTab(view, title ?? entry.Name, null, L.F("Term.TabTip", entry.Name, entry.Display, ""));
+
+        void Paint(TerminalState state) => paint(state switch
         {
             TerminalState.Connected => "SystemFillColorSuccessBrush",
             TerminalState.Connecting => "SystemFillColorAttentionBrush",
@@ -119,36 +140,120 @@ public partial class MainWindow : Window
         {
             Paint(state);
             // "exit" in an interactive session closes the tab; commands keep their output on screen
-            if (state == TerminalState.Closed && view.EndedNormally && command == null) CloseTerminal(tab);
+            if (state == TerminalState.Closed && view.EndedNormally && command == null) CloseTab(tab);
         };
         view.TitleChanged += t => tab.ToolTip = L.F("Term.TabTip", entry.Name, entry.Display, t);
+        view.EditRequested += path => OpenEditor(entry, path);
         view.KeyCommand += key =>
         {
             switch (key)
             {
-                case "close": CloseTerminal(tab); break;
+                case "close": CloseTab(tab); break;
                 case "next": Cycle(+1); break;
                 case "prev": Cycle(-1); break;
-                case "duplicate": OpenTerminal(entry, null, null); break;
+                case "duplicate": OpenTerminal(entry, null, null, view.Cwd); break;
+                case "files": OpenFiles(entry, view.Cwd); break;
             }
         };
-
-        Tabs.Items.Add(tab);
-        Tabs.SelectedItem = tab;
-        if (!IsVisible) Show();
-        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
-        Activate();
+        tab.ContextMenu = TabMenu(tab, entry, () => view.Cwd, () => OpenTerminal(entry, null, null, view.Cwd));
     }
 
-    private void CloseTerminal(TabItem tab)
+    /// <summary>The server's file manager tab (one per server): opens it or shows <paramref name="dir"/> in it.</summary>
+    public void OpenFiles(ServerEntry server, string? dir)
     {
-        if (tab.Content is TerminalView view) view.Dispose();
+        var existing = ContentTabs.FirstOrDefault(t => t.Content is FileManagerView f && f.Server.Id == server.Id);
+        if (existing is { Content: FileManagerView open })
+        {
+            Tabs.SelectedItem = existing;
+            if (dir != null) open.Navigate(dir);
+            if (!IsVisible) Show();
+            Activate();
+            return;
+        }
+        var entry = server.Clone();
+        var view = new FileManagerView(_host, entry, dir);
+        var (tab, paint, _) = AddTab(view, entry.Name, "\uE8B7", L.F("Files.TabTip", entry.Name, entry.Display));
+        void Paint() => paint(view.IsConnected ? "SystemFillColorSuccessBrush" : view.HasError ? "SystemFillColorCriticalBrush" : "SystemFillColorAttentionBrush");
+        Paint();
+        view.StateChanged += Paint;
+        view.EditRequested += path => OpenEditor(entry, path);
+        view.TerminalRequested += path => OpenTerminal(entry, null, null, path);
+        view.CloseRequested += () => CloseTab(tab);
+        tab.ContextMenu = TabMenu(tab, entry, () => view.RemotePath, () => OpenTerminal(entry, null, null, view.RemotePath));
+    }
+
+    /// <summary>A remote text file in an editor tab (the same file of the same server opens once).</summary>
+    public void OpenEditor(ServerEntry server, string path)
+    {
+        var existing = ContentTabs.FirstOrDefault(t => t.Content is EditorView e && e.Server.Id == server.Id && e.Path == path);
+        if (existing != null)
+        {
+            Tabs.SelectedItem = existing;
+            if (!IsVisible) Show();
+            Activate();
+            return;
+        }
+        var entry = server.Clone();
+        var view = new EditorView(_host, entry, path);
+        var (tab, paint, title) = AddTab(view, view.FileName, "\uE70F", L.F("TextEd.TabTip", path, entry.Name));
+        void Paint()
+        {
+            paint(view.HasError ? "SystemFillColorCriticalBrush" : view.IsDirty ? "SystemFillColorCautionBrush" : "SystemFillColorSuccessBrush");
+            title.Text = (view.IsDirty ? "● " : "") + view.FileName;
+        }
+        Paint();
+        view.StateChanged += Paint;
+        view.SavedAndClose += () => CloseTab(tab);
+        view.KeyCommand += key =>
+        {
+            switch (key)
+            {
+                case "close": CloseTab(tab); break;
+                case "next": Cycle(+1); break;
+                case "prev": Cycle(-1); break;
+            }
+        };
+        var dir = path[..Math.Max(1, path.LastIndexOf('/'))];
+        tab.ContextMenu = TabMenu(tab, entry, () => dir, () => OpenTerminal(entry, null, null, dir));
+    }
+
+    /// <summary>Right click on a tab header.</summary>
+    private ContextMenu TabMenu(TabItem tab, ServerEntry entry, Func<string?> dir, Action terminal)
+    {
+        var menu = new ContextMenu();
+        MenuItem Item(string key, Action a, string? gesture = null)
+        {
+            var mi = new MenuItem { Header = L.Get(key), InputGestureText = gesture ?? "" };
+            mi.Click += (_, _) => a();
+            menu.Items.Add(mi);
+            return mi;
+        }
+        Item("Tab.NewTerminal", terminal, "Ctrl+Shift+T");
+        Item("Tab.Files", () => OpenFiles(entry, dir()), "Ctrl+Shift+F");
+        menu.Items.Add(new Separator());
+        Item("Tab.Close", () => CloseTab(tab), "Ctrl+Shift+W");
+        Item("Tab.CloseOthers", () =>
+        {
+            foreach (var t in ContentTabs.Where(t => t != tab).ToList()) CloseTab(t);
+        });
+        return menu;
+    }
+
+    /// <summary>Asks before closing a tab that would lose work (unsaved text, a running transfer).</summary>
+    private void CloseTab(TabItem tab)
+    {
+        if (tab.Content is FileManagerView { HasRunningTransfers: true } &&
+            MessageBox.Show(this, L.Get("Files.CloseWithTransfers"), AppPaths.ProductTitle, MessageBoxButton.YesNo,
+                MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+        if (tab.Content is EditorView editor && !editor.ConfirmClose()) return;
+        if (tab.Content is IDisposable d) d.Dispose();
         var index = Tabs.Items.IndexOf(tab);
         if (index < 0) return;
         var wasSelected = Tabs.SelectedItem == tab;
         Tabs.Items.Remove(tab);
-        // the next terminal (or the previous one), the server list when none are left
-        if (wasSelected) Tabs.SelectedIndex = TerminalTabs.Any() ? Math.Min(index, Tabs.Items.Count - 1) : 0;
+        // the next tab (or the previous one), the server list when none are left
+        if (wasSelected) Tabs.SelectedIndex = ContentTabs.Any() ? Math.Min(index, Tabs.Items.Count - 1) : 0;
     }
 
     private void Cycle(int step)
@@ -160,7 +265,14 @@ public partial class MainWindow : Window
     private void OnTabChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!ReferenceEquals(e.OriginalSource, Tabs)) return;
-        if (Tabs.SelectedItem is TabItem { Content: TerminalView view }) Dispatcher.BeginInvoke(view.Focus, System.Windows.Threading.DispatcherPriority.Input);
+        Action? focus = Tabs.SelectedItem switch
+        {
+            TabItem { Content: TerminalView t } => t.Focus,
+            TabItem { Content: FileManagerView f } => f.Focus,
+            TabItem { Content: EditorView ed } => ed.Focus,
+            _ => null,
+        };
+        if (focus != null) Dispatcher.BeginInvoke(focus, System.Windows.Threading.DispatcherPriority.Input);
     }
 
     // ---------- column widths (all but the last column, which fills) ----------

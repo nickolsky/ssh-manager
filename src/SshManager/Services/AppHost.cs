@@ -281,12 +281,21 @@ public sealed partial class AppHost : IDisposable
         });
     }
 
+    /// <summary>The server's file manager tab (SFTP). Not for servers behind a jump host.</summary>
+    public void OpenFiles(ServerEntry server, string? dir = null)
+    {
+        if (!string.IsNullOrWhiteSpace(server.JumpHost) || !string.IsNullOrWhiteSpace(server.ExtraArgs))
+            throw new InvalidOperationException(L.Get("Files.NoJump"));
+        ShowMainWindow();
+        _main?.OpenFiles(server, dir);
+    }
+
     public bool UseBuiltInTerminal(ServerEntry server) =>
         SettingsStore.Settings.Terminal == TerminalMode.BuiltIn &&
         string.IsNullOrWhiteSpace(server.JumpHost) && string.IsNullOrWhiteSpace(server.ExtraArgs);
 
     public TerminalSession CreateTerminalSession(ServerEntry server) =>
-        new(Ssh, server, SettingsStore.Settings.ServerAliveInterval);
+        new(Ssh, server, SettingsStore.Settings.ServerAliveInterval, SettingsStore.Settings.TerminalIntegration);
 
     private void AfterSessionStarted(ServerEntry server)
     {

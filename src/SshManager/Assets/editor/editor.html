@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>editor</title>
+<style>
+  :root { --bg: #1f1f1f; --fg: #e6e6e6; --muted: #9a9a9a; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; }
+  #editor { position: absolute; inset: 0; }
+  #editor .cm-editor { height: 100%; }
+  #editor .cm-editor.cm-focused { outline: none; }
+  #editor .cm-scroller { font-family: "Cascadia Mono", "Cascadia Code", Consolas, monospace; line-height: 1.45; }
+  #banner {
+    position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
+    font: 14px "Segoe UI", sans-serif; color: var(--muted); text-align: center; pointer-events: none; white-space: pre-line;
+  }
+</style>
+</head>
+<body>
+<div id="editor"></div>
+<div id="banner"></div>
+<script src="vendor/codemirror.js"></script>
+<script src="editor.js"></script>
+</body>
+</html>

@@ -8,3 +8,5 @@ data/
 app/
 app-dev/
 data-*/
+
+tools/codemirror/node_modules/

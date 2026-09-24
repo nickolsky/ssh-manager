@@ -8,6 +8,8 @@
   <ItemGroup>
     <!-- shipped install scripts, see BuiltinScripts -->
     <EmbeddedResource Include="Scripts\Builtin\*.sh;Scripts\Builtin\*.yml" />
+    <!-- built-in terminal: shell integration and command specs for suggestions -->
+    <EmbeddedResource Include="Terminal\shell-integration.sh;Terminal\specs.json" />
   </ItemGroup>
 
   <ItemGroup>

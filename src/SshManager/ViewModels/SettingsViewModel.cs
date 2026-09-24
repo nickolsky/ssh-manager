@@ -126,6 +126,26 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         }
     }
 
+    public bool TerminalIntegration
+    {
+        get => S.TerminalIntegration;
+        set
+        {
+            S.TerminalIntegration = value;
+            Save();
+        }
+    }
+
+    public bool TerminalAutoSuggest
+    {
+        get => S.TerminalAutoSuggest;
+        set
+        {
+            S.TerminalAutoSuggest = value;
+            Save();
+        }
+    }
+
     public string WindowsTerminalProfile
     {
         get => S.WindowsTerminalProfile ?? "";

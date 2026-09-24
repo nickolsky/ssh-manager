@@ -258,4 +258,146 @@ public class E2ETests
         Assert.True(r2.Code == 0, r2.Err);
         Assert.Contains("PW_OK", r2.Out);
     }
+
+    /// <summary>Built-in terminal: the shell integration loads unseen, reports cwd and "edit", suggestions list real files.
+    /// SSHM_E2E_ZSH=user:password also checks a zsh login.</summary>
+    [Fact]
+    public async Task Terminal_Shell_Integration_And_Suggestions()
+    {
+        if (Target() is not { } t) return;
+        using var tmp = new TempDir();
+        var vault = new VaultService(tmp.File("vault.dat"));
+        vault.Create("password123");
+        var known = new KnownHostsService(tmp.File("known_hosts"));
+        var ssh = new SshClientFactory(vault, known) { ConfirmHostKey = _ => true };
+        var users = new List<(string User, string Password)> { (t.User, t.Password) };
+        if (Environment.GetEnvironmentVariable("SSHM_E2E_ZSH") is { Length: > 0 } z && z.Split(':', 2) is [var zu, var zp]) users.Add((zu, zp));
+
+        foreach (var (user, password) in users)
+        {
+            var server = new ServerEntry { Name = "e2e-" + user, Host = t.Host, Port = t.Port, Username = user, Password = password };
+            var output = new System.Text.StringBuilder();
+            using var session = new TerminalSession(ssh, server);
+            session.Output += s => { lock (output) output.Append(s); };
+            string Out() { lock (output) return output.ToString(); }
+            async Task WaitFor(string text)
+            {
+                for (var i = 0; i < 100 && !Out().Contains(text); i++) await Task.Delay(100);
+                Assert.True(Out().Contains(text), $"no '{text}' in: {Out()}");
+            }
+
+            await Task.Run(() => session.Open(100, 30));
+            await WaitFor("\u001b]7337;B\u0007");
+            Assert.True(session.Integrated, Out());
+            Assert.DoesNotContain("sshm/shell-", Out()); // the source line is not shown
+
+            session.Send("cd /etc\n");
+            await WaitFor("\u001b]7337;P;/etc\u0007");
+            session.Send("edit hosts\n");
+            await WaitFor("\u001b]7337;E;/etc/hosts\u0007");
+            session.Send("false\n");
+            await WaitFor("\u001b]7337;D;1\u0007");
+
+            var assist = new Core.Terminal.TerminalAssist(server, session.Run) { Cwd = "/etc" };
+            assist.Start();
+            var ls = session.Run("ls -1ApL -- /etc", TimeSpan.FromSeconds(5));
+            Assert.True(ls.Output.Contains("hosts"), ls.Combined);
+            var r = await assist.CompleteAsync("cat ho", 6, false, default);
+            Assert.Contains(r.Items, i => i.Label == "hosts" && i.Insert == "sts ");
+            r = await assist.CompleteAsync("ls /usr/sh", 10, false, default);
+            Assert.Contains(r.Items, i => i.Label == "share/");
+            for (var i = 0; i < 50 && assist.Home == null; i++) await Task.Delay(100);
+            r = await assist.CompleteAsync("whoam", 5, false, default);
+            Assert.Contains(r.Items, i => i.Label == "whoami");
+        }
+    }
+
+    /// <summary>File manager and editor over SFTP: listing, folders, a transfer with a conflict, a CRLF file saved as
+    /// it was, and (SSHM_E2E_SUDO=user:password, a sudo-capable user) saving a root-owned file through sudo.</summary>
+    [Fact]
+    public void Files_Transfers_And_Editor()
+    {
+        if (Target() is not { } t) return;
+        using var tmp = new TempDir();
+        var vault = new VaultService(tmp.File("vault.dat"));
+        vault.Create("password123");
+        var known = new KnownHostsService(tmp.File("known_hosts"));
+        var ssh = new SshClientFactory(vault, known) { ConfirmHostKey = _ => true };
+        var server = new ServerEntry { Name = "e2e", Host = t.Host, Port = t.Port, Username = t.User, Password = t.Password };
+
+        using var remote = new Core.Files.SftpFileSystem(ssh.ConnectSftp(server));
+        var root = remote.Combine(remote.Home, "sshm-e2e-" + Guid.NewGuid().ToString("N")[..8]);
+        remote.CreateDirectory(root);
+        try
+        {
+            // local tree → server
+            var local = new Core.Files.LocalFileSystem();
+            var src = Directory.CreateDirectory(Path.Combine(tmp.Path, "src"));
+            File.WriteAllText(Path.Combine(src.FullName, "a.txt"), "hello");
+            Directory.CreateDirectory(Path.Combine(src.FullName, "sub"));
+            File.WriteAllBytes(Path.Combine(src.FullName, "sub", "big.bin"), new byte[3 * 1024 * 1024 + 17]);
+            var job = new Core.Files.TransferJob("up");
+            Core.Files.Transfers.Run(job, local, [local.Stat(src.FullName)!], remote, root, false, (_, _) => Core.Files.ConflictChoice.Cancel);
+            Assert.Equal(Core.Files.TransferState.Done, job.State);
+            Assert.Equal(2, job.DoneFiles);
+            Assert.Equal(3 * 1024 * 1024 + 22, job.DoneBytes);
+            var listed = remote.List(remote.Combine(root, "src"));
+            Assert.Contains(listed, f => f.Name == "sub" && f.IsDirectory);
+            Assert.Contains(listed, f => f.Name == "a.txt" && f.Size == 5 && f.Owner == t.User);
+
+            // again: skip everything
+            job = new Core.Files.TransferJob("up2");
+            Core.Files.Transfers.Run(job, local, [local.Stat(src.FullName)!], remote, root, false, (_, _) => Core.Files.ConflictChoice.SkipAll);
+            Assert.Equal(2, job.Skipped);
+
+            // server → local, rename, delete
+            var down = Directory.CreateDirectory(Path.Combine(tmp.Path, "down"));
+            job = new Core.Files.TransferJob("down");
+            Core.Files.Transfers.Run(job, remote, [remote.Stat(remote.Combine(root, "src"))!], local, down.FullName, false, (_, _) => Core.Files.ConflictChoice.Cancel);
+            Assert.Equal(Core.Files.TransferState.Done, job.State);
+            Assert.Equal("hello", File.ReadAllText(Path.Combine(down.FullName, "src", "a.txt")));
+            Assert.Equal(3 * 1024 * 1024 + 17, new FileInfo(Path.Combine(down.FullName, "src", "sub", "big.bin")).Length);
+            remote.Rename(remote.Combine(root, "src/a.txt"), remote.Combine(root, "src/b.txt"));
+            Assert.NotNull(remote.Stat(remote.Combine(root, "src/b.txt")));
+
+            // editor: CRLF and a missing final newline stay as they were
+            var path = remote.Combine(root, "crlf.conf");
+            using (var w = remote.Create(path)) w.Write("a=1\r\nb=2"u8);
+            using (var file = new Core.Files.RemoteTextFile(ssh, server, path))
+            {
+                Assert.Equal("a=1\nb=2", file.Load());
+                Assert.True(file.Format.Crlf);
+                Assert.False(file.ChangedOnServer());
+                file.Save("a=1\nb=3\nc=4");
+            }
+            using (var r = remote.OpenRead(path))
+            using (var reader = new StreamReader(r)) Assert.Equal("a=1\r\nb=3\r\nc=4", reader.ReadToEnd());
+
+            remote.Delete(remote.Stat(remote.Combine(root, "src"))!);
+            Assert.Null(remote.Stat(remote.Combine(root, "src")));
+        }
+        finally
+        {
+            remote.Delete(remote.Stat(root)!);
+        }
+
+        if (Environment.GetEnvironmentVariable("SSHM_E2E_SUDO") is { Length: > 0 } su && su.Split(':', 2) is [var user, var password])
+        {
+            // /etc/sshm-test.conf: root-owned 644 with CRLF lines, prepared in the container
+            var bob = new ServerEntry { Name = "e2e-sudo", Host = t.Host, Port = t.Port, Username = user, Password = password };
+            using var file = new Core.Files.RemoteTextFile(ssh, bob, "/etc/sshm-test.conf");
+            Assert.Equal("line1\nline2\n", file.Load());
+            Assert.False(file.UsesSudo);
+            Assert.Throws<UnauthorizedAccessException>(() => file.Save("line1\nchanged\n"));
+            file.Save("line1\nchanged\n", sudo: true);
+            Assert.True(file.UsesSudo);
+            using var check = new Core.Files.SftpFileSystem(ssh.ConnectSftp(bob));
+            var st = check.Stat("/etc/sshm-test.conf")!;
+            Assert.Equal("root", st.Owner);
+            Assert.Equal("rw-r--r--", st.Permissions);
+            using var r = check.OpenRead("/etc/sshm-test.conf");
+            using var reader = new StreamReader(r);
+            Assert.Equal("line1\r\nchanged\r\n", reader.ReadToEnd());
+        }
+    }
 }

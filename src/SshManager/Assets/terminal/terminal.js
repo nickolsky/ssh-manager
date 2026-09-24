@@ -1,6 +1,9 @@
 // Built-in terminal page: xterm.js talking to TerminalView (C#) over WebView2 messages.
-//   C# -> page: out {d}, theme {dark,bg,fg,font,size}, closed {text}, opened, paste {d}, focus, banner {text}
-//   page -> C#: ready {cols,rows}, in {d}, size {cols,rows}, paste, copy {d}, key {k}, title {d}, link {url}, reconnect
+//   C# -> page: out {d}, theme {dark,bg,fg,font,size}, closed {text}, opened, paste {d}, focus, banner {text},
+//               config {auto,hint}, completions {id,items:[{l,k,d,del,ins}],ghost}
+//   page -> C#: ready {cols,rows}, in {d}, size {cols,rows}, paste, copy {d}, key {k}, title {d}, link {url}, reconnect,
+//               complete {id,line,cursor,explicit}, cmd {d}, cwd {d}, edit {d}
+// Shell integration (OSC 7337 from the server, see shell-integration.sh): A prompt, B input starts, P;cwd, E;file.
 (() => {
   'use strict';
   const host = window.chrome && window.chrome.webview;
@@ -75,6 +78,7 @@
     if (e.type !== 'keydown') return true;
     const ctrl = e.ctrlKey && !e.altKey && !e.metaKey;
     const k = e.key.toLowerCase();
+    if (suggestKey(e, k) === false) { e.preventDefault(); return false; }
     // copy: Ctrl+Shift+C, Ctrl+Insert, or Ctrl+C while something is selected
     if ((ctrl && e.shiftKey && k === 'c') || (ctrl && k === 'insert') || (ctrl && !e.shiftKey && k === 'c' && term.hasSelection())) {
       copySelection();
@@ -92,6 +96,7 @@
     if (ctrl && k === 'tab') { send({ t: 'key', k: e.shiftKey ? 'prev' : 'next' }); e.preventDefault(); return false; }
     if (ctrl && e.shiftKey && k === 'w') { send({ t: 'key', k: 'close' }); e.preventDefault(); return false; }
     if (ctrl && e.shiftKey && k === 't') { send({ t: 'key', k: 'duplicate' }); e.preventDefault(); return false; }
+    if (ctrl && e.shiftKey && k === 'f') { send({ t: 'key', k: 'files' }); e.preventDefault(); return false; }
     if (ctrl && (k === '=' || k === '+')) { zoom(1); e.preventDefault(); return false; }
     if (ctrl && k === '-') { zoom(-1); e.preventDefault(); return false; }
     if (ctrl && k === '0') { setFontSize(14); e.preventDefault(); return false; }
@@ -118,6 +123,248 @@
   };
   const zoom = (dir) => setFontSize(term.options.fontSize + dir);
 
+  // ---------- shell integration and suggestions ----------
+  // state: none (no integration) | prompt (drawing it) | input (typing a command) | running
+  const shell = { state: 'none', marker: null, x: 0 };
+  const ghostEl = document.getElementById('ghost');
+  const popEl = document.getElementById('suggest');
+  const pop = { items: [], sel: 0, touched: false, visible: false, sticky: false };
+  let config = { auto: true, hint: '' };
+  let ghost = '';
+  let reqId = 0, reqExplicit = false, lastKey = '', timer = 0;
+
+  term.parser.registerOscHandler(7337, (data) => {
+    const i = data.indexOf(';');
+    const k = i < 0 ? data : data.slice(0, i);
+    const v = i < 0 ? '' : data.slice(i + 1);
+    switch (k) {
+      case 'A':
+        shell.state = 'prompt';
+        hideSuggest();
+        break;
+      case 'B': {
+        if (shell.marker) shell.marker.dispose();
+        shell.marker = term.registerMarker(0);
+        shell.x = term.buffer.active.cursorX;
+        shell.state = 'input';
+        lastKey = '';
+        break;
+      }
+      case 'P': send({ t: 'cwd', d: v }); break;
+      case 'E': send({ t: 'edit', d: v }); break;
+    }
+    return true;
+  });
+
+  // The command line as the terminal shows it: from the end of the prompt, following wrapped rows.
+  const readInput = () => {
+    if (shell.state !== 'input' || closed || !shell.marker || shell.marker.isDisposed || shell.marker.line < 0) return null;
+    const b = term.buffer.active;
+    if (b.type !== 'normal') return null;
+    const y0 = shell.marker.line, cy = b.baseY + b.cursorY;
+    if (cy < y0) return null;
+    let text = '', cursor = -1;
+    for (let y = y0; y < b.length; y++) {
+      const line = b.getLine(y);
+      if (!line || (y > y0 && !line.isWrapped)) break;
+      for (let x = y === y0 ? shell.x : 0; x < term.cols; x++) {
+        if (y === cy && x === b.cursorX) cursor = text.length;
+        const cell = line.getCell(x);
+        if (!cell || cell.getWidth() === 0) continue;
+        text += cell.getChars() || ' ';
+      }
+    }
+    if (cursor < 0) cursor = text.replace(/\s+$/, '').length;
+    // a right prompt (zsh RPROMPT) after the input is not part of it
+    const after = text.slice(cursor).replace(/\s{3,}.*$/, '').replace(/\s+$/, '');
+    return { line: text.slice(0, cursor) + after, cursor, atEnd: after.length === 0 };
+  };
+
+  const scheduleSuggest = () => {
+    if (shell.state !== 'input') return;
+    clearTimeout(timer);
+    timer = setTimeout(() => requestSuggest(false), 40);
+  };
+  term.onWriteParsed(scheduleSuggest);
+
+  const requestSuggest = (explicit) => {
+    const inp = readInput();
+    if (!inp) { hideSuggest(); return; }
+    const key = inp.line + '\u0001' + inp.cursor;
+    if (!explicit && key === lastKey) return;
+    lastKey = key;
+    if (!explicit && inp.line.trim() === '') { hideSuggest(); return; }
+    reqExplicit = !!explicit;
+    send({ t: 'complete', id: ++reqId, line: inp.line, cursor: inp.cursor, explicit: !!explicit });
+  };
+
+  const onCompletions = (m) => {
+    if (m.id !== reqId) return;
+    const inp = readInput();
+    if (!inp || inp.line + '\u0001' + inp.cursor !== lastKey) return;
+    showGhost(inp.atEnd ? (m.ghost || '') : '');
+    if (reqExplicit) pop.sticky = true;
+    if ((config.auto || pop.sticky) && m.items && m.items.length) showPopup(m.items, inp);
+    else hidePopup();
+  };
+
+  const cell = () => {
+    const screen = term.element.querySelector('.xterm-screen');
+    const r = screen.getBoundingClientRect();
+    return { left: r.left, top: r.top, w: r.width / term.cols, h: r.height / term.rows };
+  };
+  const cursorVisible = () => term.buffer.active.viewportY === term.buffer.active.baseY;
+
+  const showGhost = (text) => {
+    ghost = text;
+    const b = term.buffer.active;
+    const room = term.cols - b.cursorX;
+    if (!text || !cursorVisible() || room <= 0) { ghostEl.style.display = 'none'; return; }
+    const c = cell();
+    ghostEl.textContent = text.length > room ? text.slice(0, room) : text;
+    ghostEl.style.left = (c.left + b.cursorX * c.w) + 'px';
+    ghostEl.style.top = (c.top + b.cursorY * c.h) + 'px';
+    ghostEl.style.height = c.h + 'px';
+    ghostEl.style.lineHeight = c.h + 'px';
+    ghostEl.style.fontFamily = term.options.fontFamily;
+    ghostEl.style.fontSize = term.options.fontSize + 'px';
+    ghostEl.style.display = 'block';
+  };
+
+  const ICONS = {
+    history: '\uE81C', command: '\uE756', sub: '\uE76C', flag: '\uE8EC', dir: '\uE8B7', file: '\uE8A5',
+    container: '\uE7B8', image: '\uE7B8', service: '\uE713', package: '\uE7B8', branch: '\uE8AB', value: '\uE8FD',
+  };
+  const esc = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
+  // the typed part of the label in the accent colour
+  const highlight = (label, typed) => {
+    if (!typed) return esc(label);
+    const lo = label.toLowerCase(), t = typed.toLowerCase();
+    const i = lo.startsWith(t) ? 0 : lo.indexOf(t);
+    if (i < 0) return esc(label);
+    return esc(label.slice(0, i)) + '<b>' + esc(label.slice(i, i + t.length)) + '</b>' + esc(label.slice(i + t.length));
+  };
+
+  const typedWord = (inp) => {
+    const before = inp.line.slice(0, inp.cursor);
+    return before.slice(Math.max(before.lastIndexOf(' '), before.lastIndexOf('/'), before.lastIndexOf('=')) + 1);
+  };
+
+  const showPopup = (items, inp) => {
+    const keep = pop.visible && pop.touched && pop.items[pop.sel] ? pop.items[pop.sel].l : null;
+    pop.items = items;
+    pop.sel = keep ? Math.max(0, items.findIndex((it) => it.l === keep)) : 0;
+    if (!keep) pop.touched = false;
+    const before = inp.line.slice(0, inp.cursor);
+    const word = typedWord(inp);
+    popEl.innerHTML = items.map((it, i) =>
+      '<div class="it' + (i === pop.sel ? ' sel' : '') + '" data-i="' + i + '">' +
+      '<span class="ic">' + (ICONS[it.k] || '') + '</span>' +
+      '<span class="lb">' + highlight(it.l, it.k === 'history' ? before : word) + '</span>' +
+      (it.d ? '<span class="dt">' + esc(it.d) + '</span>' : '') + '</div>').join('') +
+      (config.hint ? '<div class="hint">' + esc(config.hint) + '</div>' : '');
+    popEl.style.display = 'block';
+    pop.visible = true;
+    place(inp);
+    scrollToSel();
+  };
+
+  // under the word being completed, above the line when there is no room below
+  const place = (inp) => {
+    const b = term.buffer.active;
+    if (!cursorVisible()) { hidePopup(); return; }
+    const c = cell();
+    const word = Math.min(typedWord(inp).length, b.cursorX);
+    const x = c.left + (b.cursorX - word) * c.w - 30;
+    const rowTop = c.top + b.cursorY * c.h;
+    const h = popEl.offsetHeight, w = popEl.offsetWidth;
+    const below = rowTop + c.h + 2;
+    const top = below + h <= window.innerHeight - 4 || rowTop - h - 2 < 0 ? below : rowTop - h - 2;
+    popEl.style.top = Math.max(0, top) + 'px';
+    popEl.style.left = Math.max(2, Math.min(x, window.innerWidth - w - 4)) + 'px';
+  };
+
+  const scrollToSel = () => {
+    const el = popEl.querySelector('.it.sel');
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  };
+
+  const select = (i) => {
+    if (!pop.items.length) return;
+    pop.sel = (i + pop.items.length) % pop.items.length;
+    pop.touched = true;
+    popEl.querySelectorAll('.it').forEach((el) => el.classList.toggle('sel', +el.dataset.i === pop.sel));
+    scrollToSel();
+    ghostEl.style.display = 'none';
+  };
+
+  const hidePopup = () => {
+    pop.visible = false;
+    pop.touched = false;
+    popEl.style.display = 'none';
+  };
+  const hideSuggest = () => {
+    hidePopup();
+    pop.sticky = false;
+    ghost = '';
+    ghostEl.style.display = 'none';
+  };
+
+  const accept = (it) => {
+    hideSuggest();
+    if (!it) return;
+    const d = '\x7f'.repeat(it.del || 0) + (it.ins || '');
+    if (d) send({ t: 'in', d });
+  };
+
+  popEl.addEventListener('mousedown', (e) => e.preventDefault()); // keep the focus in the terminal
+  popEl.addEventListener('click', (e) => {
+    const el = e.target.closest('.it');
+    if (el && pop.items[+el.dataset.i]) accept(pop.items[+el.dataset.i]);
+    term.focus();
+  });
+  term.onScroll(() => { if (!cursorVisible()) hideSuggest(); });
+  if (term.textarea) term.textarea.addEventListener('blur', () => hidePopup());
+
+  // keys for the popup and the grey suggestion; false = handled here
+  const suggestKey = (e, k) => {
+    const plain = !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && e.code === 'Space') {
+      if (shell.state !== 'input') return true;
+      requestSuggest(true);
+      return false;
+    }
+    if (pop.visible) {
+      if (plain && k === 'arrowdown') { select(pop.sel + 1); return false; }
+      if (plain && k === 'arrowup') { select(pop.sel - 1); return false; }
+      if (plain && k === 'pagedown') { select(Math.min(pop.items.length - 1, pop.sel + 8)); return false; }
+      if (plain && k === 'pageup') { select(Math.max(0, pop.sel - 8)); return false; }
+      if (plain && k === 'tab') { accept(pop.items[pop.sel]); return false; }
+      if (plain && k === 'enter' && pop.touched) { accept(pop.items[pop.sel]); return false; }
+      if (k === 'escape') { hideSuggest(); return false; }
+    } else if (ghost && k === 'escape') {
+      hideSuggest();
+      return false;
+    }
+    if (ghost && plain && (k === 'arrowright' || k === 'end')) {
+      const inp = readInput();
+      if (inp && inp.atEnd) { const g = ghost; hideSuggest(); send({ t: 'in', d: g }); return false; }
+    }
+    if (ghost && e.ctrlKey && !e.shiftKey && !e.altKey && k === 'arrowright') {
+      const inp = readInput();
+      const part = (ghost.match(/^\s*[^\s\/]+\/?/) || [ghost])[0];
+      if (inp && inp.atEnd) { hideSuggest(); send({ t: 'in', d: part }); return false; }
+    }
+    if (k === 'enter' && shell.state === 'input') {
+      const inp = readInput();
+      if (inp && inp.line.trim()) send({ t: 'cmd', d: inp.line });
+      shell.state = 'running';
+      hideSuggest();
+    }
+    return true;
+  };
+
   // ---------- messages from the app ----------
   host && host.addEventListener('message', (ev) => {
     const m = ev.data;
@@ -135,6 +382,10 @@
         document.documentElement.style.setProperty('--bg', theme.background);
         document.documentElement.style.setProperty('--fg', theme.foreground);
         document.documentElement.style.setProperty('--muted', m.dark ? '#9a9a9a' : '#6e7781');
+        const pal = m.dark
+          ? { '--pop-bg': '#2b2b2b', '--pop-border': '#454545', '--pop-sel': '#04395e', '--pop-match': '#4fb6ff', '--ghost': '#7a7a7a' }
+          : { '--pop-bg': '#ffffff', '--pop-border': '#d0d7de', '--pop-sel': '#cfe3ff', '--pop-match': '#0969da', '--ghost': '#8c959f' };
+        for (const [k, v] of Object.entries(pal)) document.documentElement.style.setProperty(k, v);
         if (m.font) term.options.fontFamily = m.font;
         if (m.size) term.options.fontSize = m.size;
         refit();
@@ -147,6 +398,8 @@
         break;
       case 'closed':
         closed = true;
+        shell.state = 'none';
+        hideSuggest();
         term.options.cursorBlink = false;
         term.write('\r\n\x1b[90m' + (m.text || '') + '\x1b[0m\r\n');
         break;
@@ -155,6 +408,12 @@
         break;
       case 'focus':
         term.focus();
+        break;
+      case 'config':
+        config = { auto: m.auto !== false, hint: m.hint || '' };
+        break;
+      case 'completions':
+        onCompletions(m);
         break;
     }
   });

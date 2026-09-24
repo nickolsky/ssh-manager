@@ -1,0 +1,104 @@
+<UserControl x:Class="SshManager.Views.FilePanelView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:l="clr-namespace:SshManager.Localization">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="Vis" />
+        <Style x:Key="Cell" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+        <Style x:Key="PanelButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="Margin" Value="4,0,0,0" />
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+    </UserControl.Resources>
+    <Border x:Name="Frame" BorderThickness="0,2,0,0" BorderBrush="Transparent" Padding="0,6,0,0">
+        <DockPanel>
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6" LastChildFill="True">
+                <TextBlock DockPanel.Dock="Left" Text="{Binding Icon}" FontFamily="{StaticResource IconFont}" FontSize="15"
+                           VerticalAlignment="Center" Margin="2,0,6,0" />
+                <TextBlock DockPanel.Dock="Left" Text="{Binding Title}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0"
+                           MaxWidth="200" TextTrimming="CharacterEllipsis" />
+                <Button DockPanel.Dock="Right" Content="&#xE72C;" Style="{StaticResource PanelButton}" Click="OnRefresh" ToolTip="{l:Tr Files.Refresh}" />
+                <Button DockPanel.Dock="Right" Content="&#xE80F;" Style="{StaticResource PanelButton}" Click="OnHome" ToolTip="{l:Tr Files.Home}" />
+                <Button DockPanel.Dock="Right" Content="&#xE74A;" Style="{StaticResource PanelButton}" Click="OnUp" ToolTip="{l:Tr Files.Up}" />
+                <TextBox x:Name="PathBox" Text="{Binding PathEdit, UpdateSourceTrigger=PropertyChanged}" KeyDown="OnPathKey"
+                         FontFamily="Cascadia Mono, Consolas" VerticalContentAlignment="Center" />
+            </DockPanel>
+            <TextBlock DockPanel.Dock="Bottom" Text="{Binding Status}" Style="{StaticResource Hint}" Margin="2,6,0,0"
+                       TextTrimming="CharacterEllipsis" />
+            <Grid>
+                <DataGrid x:Name="Grid" ItemsSource="{Binding Rows}" AutoGenerateColumns="False" IsReadOnly="True"
+                          SelectionMode="Extended" SelectionUnit="FullRow" HeadersVisibility="Column" GridLinesVisibility="None"
+                          CanUserAddRows="False" CanUserReorderColumns="False" CanUserSortColumns="True" AllowDrop="True"
+                          RowHeight="26"
+                          MouseDoubleClick="OnDoubleClick" PreviewKeyDown="OnGridKey" Sorting="OnSorting"
+                          PreviewMouseLeftButtonDown="OnDragStart" PreviewMouseMove="OnDragMove" DragOver="OnDragOver" Drop="OnDrop"
+                          GotKeyboardFocus="OnGridFocus" ContextMenuOpening="OnContextMenuOpening">
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="{l:Tr Col.Name}" Width="*" MinWidth="120" SortMemberPath="Name">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Opacity="{Binding Opacity}">
+                                        <TextBlock Text="{Binding Icon}" FontFamily="{StaticResource IconFont}" FontSize="13" Margin="4,0,8,0"
+                                                   VerticalAlignment="Center" Opacity="0.8" />
+                                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="{l:Tr Files.Size}" Binding="{Binding SizeText}" Width="80" SortMemberPath="Item.Size">
+                            <DataGridTextColumn.ElementStyle>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="HorizontalAlignment" Value="Right" />
+                                    <Setter Property="VerticalAlignment" Value="Center" />
+                                    <Setter Property="Margin" Value="0,0,8,0" />
+                                </Style>
+                            </DataGridTextColumn.ElementStyle>
+                        </DataGridTextColumn>
+                        <DataGridTextColumn Header="{l:Tr Files.Modified}" Binding="{Binding ModifiedText}" Width="120" SortMemberPath="Item.Modified" ElementStyle="{StaticResource Cell}" />
+                        <DataGridTextColumn x:Name="PermColumn" Header="{l:Tr Files.Permissions}" Binding="{Binding Permissions}" Width="90" ElementStyle="{StaticResource Cell}"
+                                            FontFamily="Cascadia Mono, Consolas" />
+                        <DataGridTextColumn x:Name="OwnerColumn" Header="{l:Tr Files.Owner}" Binding="{Binding Owner}" Width="100" ElementStyle="{StaticResource Cell}" />
+                    </DataGrid.Columns>
+                    <DataGrid.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem x:Name="MiOpen" Header="{l:Tr Files.Open}" InputGestureText="Enter" Click="OnMenuOpen" />
+                            <MenuItem x:Name="MiEdit" Header="{l:Tr Files.Edit}" InputGestureText="F4" Click="OnMenuEdit" />
+                            <MenuItem x:Name="MiCopy" InputGestureText="F5" Click="OnMenuCopy" />
+                            <MenuItem x:Name="MiMove" InputGestureText="F6" Click="OnMenuMove" />
+                            <Separator />
+                            <MenuItem x:Name="MiRename" Header="{l:Tr Files.Rename}" InputGestureText="F2" Click="OnMenuRename" />
+                            <MenuItem x:Name="MiChmod" Header="{l:Tr Files.Chmod}" Click="OnMenuChmod" />
+                            <MenuItem x:Name="MiCopyPath" Header="{l:Tr Files.CopyPath}" Click="OnMenuCopyPath" />
+                            <MenuItem x:Name="MiDelete" Header="{l:Tr Files.Delete}" InputGestureText="F8" Click="OnMenuDelete" />
+                            <Separator />
+                            <MenuItem Header="{l:Tr Files.NewFolder}" InputGestureText="F7" Click="OnMenuNewFolder" />
+                            <MenuItem x:Name="MiNewFile" Header="{l:Tr Files.NewFile}" InputGestureText="Shift+F4" Click="OnMenuNewFile" />
+                            <MenuItem x:Name="MiTerminal" Header="{l:Tr Files.TerminalHere}" Click="OnMenuTerminal" />
+                            <MenuItem x:Name="MiExplorer" Header="{l:Tr Files.Explorer}" Click="OnMenuExplorer" />
+                            <MenuItem Header="{l:Tr Files.ShowHidden}" InputGestureText="Ctrl+H" IsCheckable="True"
+                                      IsChecked="{Binding ShowHidden}" />
+                            <MenuItem Header="{l:Tr Files.Refresh}" InputGestureText="Ctrl+R" Click="OnRefresh" />
+                        </ContextMenu>
+                    </DataGrid.ContextMenu>
+                </DataGrid>
+                <Border Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" Opacity="0.85"
+                        Visibility="{Binding HasError, Converter={StaticResource Vis}}" VerticalAlignment="Bottom" Padding="10,8"
+                        BorderBrush="{DynamicResource SystemFillColorCriticalBrush}" BorderThickness="0,1,0,0">
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="{l:Tr Files.Retry}" Click="OnRetry" Margin="10,0,0,0" Padding="12,4" />
+                        <TextBlock Text="{Binding Error}" TextWrapping="Wrap" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource SystemFillColorCriticalBrush}" />
+                    </DockPanel>
+                </Border>
+                <ProgressBar IsIndeterminate="True" VerticalAlignment="Top" Height="2" Margin="0,30,0,0"
+                             Visibility="{Binding Busy, Converter={StaticResource Vis}}" />
+            </Grid>
+        </DockPanel>
+    </Border>
+</UserControl>

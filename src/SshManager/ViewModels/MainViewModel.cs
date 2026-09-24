@@ -62,6 +62,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         bool HasKey() => SelectedKey != null;
 
         ConnectCommand = new RelayCommand(Connect, HasServer);
+        FilesCommand = new RelayCommand(OpenFiles, HasServer);
         AddServerCommand = new RelayCommand(AddServer);
         EditServerCommand = new RelayCommand(EditServer, HasServer);
         DuplicateServerCommand = new RelayCommand(DuplicateServer, HasServer);
@@ -236,6 +237,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool IsLangEn => LanguageSetting == L.English;
 
     public ICommand ConnectCommand { get; }
+    public ICommand FilesCommand { get; }
     public ICommand AddServerCommand { get; }
     public ICommand EditServerCommand { get; }
     public ICommand DuplicateServerCommand { get; }
@@ -583,6 +585,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     // ---------- servers ----------
+
+    private void OpenFiles()
+    {
+        if (SelectedServer == null) return;
+        try
+        {
+            _host.OpenFiles(SelectedServer.Entry);
+        }
+        catch (Exception ex)
+        {
+            Warn(L.Get("Files.Title"), ex.Message);
+        }
+    }
 
     public void Connect()
     {
