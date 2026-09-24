@@ -4,6 +4,55 @@
              xmlns:l="clr-namespace:SshManager.Localization">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="Vis" />
+        <!-- Far-like rows: a cursor bar (the selected row), marked files in the caution colour, no cell borders -->
+        <Style x:Key="FarRow" TargetType="DataGridRow">
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridRow">
+                        <!-- a background makes the whole row clickable, not only the text -->
+                        <Grid Background="Transparent">
+                            <Border x:Name="Hover" Background="{DynamicResource SubtleFillColorSecondaryBrush}" CornerRadius="4" Margin="2,1" Visibility="Collapsed" />
+                            <Border x:Name="Bar" Background="{DynamicResource AccentFillColorDefaultBrush}" CornerRadius="4" Margin="2,1" Opacity="0.38" Visibility="Collapsed" />
+                            <DataGridCellsPresenter ItemsPanel="{TemplateBinding ItemsPanel}" SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Hover" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bar" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsSelected" Value="True" />
+                                    <Condition Property="Selector.IsSelectionActive" Value="False" />
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Bar" Property="Opacity" Value="0.16" />
+                            </MultiTrigger>
+                            <DataTrigger Binding="{Binding IsMarked}" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCautionBrush}" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="FarCell" TargetType="DataGridCell">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridCell">
+                        <Border Background="Transparent">
+                            <ContentPresenter VerticalAlignment="Center" Margin="6,0,4,0" SnapsToDevicePixels="True" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <Style x:Key="Cell" TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
@@ -33,18 +82,21 @@
                        TextTrimming="CharacterEllipsis" />
             <Grid>
                 <DataGrid x:Name="Grid" ItemsSource="{Binding Rows}" AutoGenerateColumns="False" IsReadOnly="True"
-                          SelectionMode="Extended" SelectionUnit="FullRow" HeadersVisibility="Column" GridLinesVisibility="None"
+                          SelectionMode="Single" SelectionUnit="FullRow" HeadersVisibility="Column" GridLinesVisibility="None"
+                          RowStyle="{StaticResource FarRow}" CellStyle="{StaticResource FarCell}" FocusVisualStyle="{x:Null}"
+                          KeyboardNavigation.DirectionalNavigation="Contained" KeyboardNavigation.TabNavigation="None"
                           CanUserAddRows="False" CanUserReorderColumns="False" CanUserSortColumns="True" AllowDrop="True"
                           RowHeight="26"
                           MouseDoubleClick="OnDoubleClick" PreviewKeyDown="OnGridKey" Sorting="OnSorting"
                           PreviewMouseLeftButtonDown="OnDragStart" PreviewMouseMove="OnDragMove" DragOver="OnDragOver" Drop="OnDrop"
+                          PreviewMouseRightButtonDown="OnRightDown" PreviewMouseRightButtonUp="OnRightUp"
                           GotKeyboardFocus="OnGridFocus" ContextMenuOpening="OnContextMenuOpening">
                     <DataGrid.Columns>
                         <DataGridTemplateColumn Header="{l:Tr Col.Name}" Width="*" MinWidth="120" SortMemberPath="Name">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Opacity="{Binding Opacity}">
-                                        <TextBlock Text="{Binding Icon}" FontFamily="{StaticResource IconFont}" FontSize="13" Margin="4,0,8,0"
+                                        <TextBlock Text="{Binding Icon}" FontFamily="{StaticResource IconFont}" FontSize="13" Margin="0,0,8,0"
                                                    VerticalAlignment="Center" Opacity="0.8" />
                                         <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
@@ -76,6 +128,10 @@
                             <MenuItem x:Name="MiChmod" Header="{l:Tr Files.Chmod}" Click="OnMenuChmod" />
                             <MenuItem x:Name="MiCopyPath" Header="{l:Tr Files.CopyPath}" Click="OnMenuCopyPath" />
                             <MenuItem x:Name="MiDelete" Header="{l:Tr Files.Delete}" InputGestureText="F8" Click="OnMenuDelete" />
+                            <Separator />
+                            <MenuItem Header="{l:Tr Files.MarkMask}" InputGestureText="Num +" Click="OnMenuMarkMask" />
+                            <MenuItem Header="{l:Tr Files.UnmarkMask}" InputGestureText="Num −" Click="OnMenuUnmarkMask" />
+                            <MenuItem Header="{l:Tr Files.InvertMarks}" InputGestureText="Num *" Click="OnMenuInvert" />
                             <Separator />
                             <MenuItem Header="{l:Tr Files.NewFolder}" InputGestureText="F7" Click="OnMenuNewFolder" />
                             <MenuItem x:Name="MiNewFile" Header="{l:Tr Files.NewFile}" InputGestureText="Shift+F4" Click="OnMenuNewFile" />

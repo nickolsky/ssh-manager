@@ -50,6 +50,8 @@ public sealed class AppSettings
     public Dictionary<string, string> FilesRemoteDirs { get; set; } = [];
     public string? SshPath { get; set; }
     public bool CloseToTray { get; set; } = true;
+    /// <summary>System-wide shortcut that shows / hides the main window ("Win+Alt+X"); empty = off.</summary>
+    public string? GlobalHotkey { get; set; } = "Win+Alt+X";
     public int ServerAliveInterval { get; set; } = 30;
     public double WindowWidth { get; set; } = 1440;
     public double WindowHeight { get; set; } = 740;
@@ -63,6 +65,11 @@ public sealed class AppSettings
     /// <summary>Format of this file; older files are migrated on load.</summary>
     public int SettingsVersion { get; set; }
     public bool NotifyOnServerDown { get; set; } = true;
+    /// <summary>Look for a new version on GitHub Releases once a day.</summary>
+    public bool CheckUpdates { get; set; } = true;
+    public DateTime? LastUpdateCheck { get; set; }
+    /// <summary>The version the tray already told about.</summary>
+    public string? NotifiedUpdate { get; set; }
     /// <summary>Look up server location via an online GeoIP service.</summary>
     public bool GeoIpEnabled { get; set; } = true;
     /// <summary>Collect OS / containers / services / forwards in the background.</summary>

@@ -16,6 +16,7 @@ public partial class App : Application
     {
         base.OnStartup(e);
         var tray = e.Args.Contains("--tray", StringComparer.OrdinalIgnoreCase);
+        WaitForUpdatedProcess(e.Args);
 
         _singleInstance = new Mutex(true, AppPaths.SingleInstanceLock, out var isFirst);
         if (!isFirst)
@@ -38,6 +39,22 @@ public partial class App : Application
         DispatcherUnhandledException += OnUnhandled;
         Host = new AppHost(Dispatcher);
         Host.Start(tray);
+    }
+
+    /// <summary>"--after-update PID": started by the old version, which is still exiting.</summary>
+    private static void WaitForUpdatedProcess(string[] args)
+    {
+        var i = Array.FindIndex(args, a => a.Equals("--after-update", StringComparison.OrdinalIgnoreCase));
+        if (i < 0 || i + 1 >= args.Length || !int.TryParse(args[i + 1], out var pid)) return;
+        try
+        {
+            using var old = System.Diagnostics.Process.GetProcessById(pid);
+            old.WaitForExit(30_000);
+        }
+        catch (ArgumentException)
+        {
+            // already gone
+        }
     }
 
     private static void OnUnhandled(object sender, DispatcherUnhandledExceptionEventArgs e)

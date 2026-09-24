@@ -103,12 +103,43 @@
     return true;
   });
 
-  // right click: copy the selection, or paste when nothing is selected (PuTTY / Windows Terminal style)
+  // ---------- right-click menu ----------
+  const menuEl = document.getElementById('menu');
+  let menuText = { copy: 'Copy', paste: 'Paste', selectAll: 'Select all', clear: 'Clear screen', files: 'Files here', dup: 'New terminal here' };
+  const hideMenu = () => { menuEl.style.display = 'none'; };
+  const MENU = () => [
+    { id: 'copy', ic: '\uE8C8', k: 'Ctrl+Shift+C', off: !term.hasSelection(), run: () => { copySelection(); term.clearSelection(); } },
+    { id: 'paste', ic: '\uE77F', k: 'Ctrl+V', off: closed, run: () => send({ t: 'paste' }) },
+    { id: 'selectAll', ic: '\uE8B3', k: '', run: () => term.selectAll() },
+    { sep: true },
+    { id: 'clear', ic: '\uE894', k: '', run: () => term.clear() },
+    { sep: true },
+    { id: 'files', ic: '\uE8B7', k: 'Ctrl+Shift+F', run: () => send({ t: 'key', k: 'files' }) },
+    { id: 'dup', ic: '\uE756', k: 'Ctrl+Shift+T', run: () => send({ t: 'key', k: 'duplicate' }) },
+  ];
   document.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    if (!copySelection()) send({ t: 'paste' });
-    else term.clearSelection();
+    hideSuggest();
+    const items = MENU();
+    menuEl.innerHTML = items.map((it, i) => it.sep ? '<div class="sep"></div>'
+      : '<div class="mi' + (it.off ? ' off' : '') + '" data-i="' + i + '"><span class="ic">' + it.ic + '</span><span>' +
+        esc(menuText[it.id] || it.id) + '</span><span class="k">' + it.k + '</span></div>').join('');
+    menuEl.style.display = 'block';
+    const w = menuEl.offsetWidth, h = menuEl.offsetHeight;
+    menuEl.style.left = Math.max(2, Math.min(e.clientX, window.innerWidth - w - 4)) + 'px';
+    menuEl.style.top = Math.max(2, Math.min(e.clientY, window.innerHeight - h - 4)) + 'px';
+    menuEl.onclick = (ev) => {
+      const el = ev.target.closest('.mi');
+      if (!el) return;
+      hideMenu();
+      items[+el.dataset.i].run();
+      term.focus();
+    };
   });
+  menuEl.addEventListener('mousedown', (e) => e.preventDefault()); // keep the selection
+  document.addEventListener('mousedown', (e) => { if (!menuEl.contains(e.target)) hideMenu(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideMenu(); }, true);
+  window.addEventListener('blur', hideMenu);
 
   document.addEventListener('wheel', (e) => {
     if (!e.ctrlKey) return;
@@ -411,6 +442,7 @@
         break;
       case 'config':
         config = { auto: m.auto !== false, hint: m.hint || '' };
+        if (m.menu) menuText = Object.assign(menuText, m.menu);
         break;
       case 'completions':
         onCompletions(m);

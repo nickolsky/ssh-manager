@@ -10,3 +10,4 @@ app-dev/
 data-*/
 
 tools/codemirror/node_modules/
+artifacts/

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
 using SshManager.Core;
@@ -38,7 +39,15 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         AddOsCommand = new RelayCommand(AddOs);
         AddComposeCommand = new RelayCommand(AddCompose);
         RestoreBuiltinsCommand = new RelayCommand(RestoreBuiltins);
+        CheckUpdatesCommand = new RelayCommand(async () => await _host.Updates.CheckAsync(manual: true), () => !_host.Updates.Busy);
+        InstallUpdateCommand = new RelayCommand(InstallUpdate, () => UpdateAvailable && !_host.Updates.Busy);
+        OpenReleaseCommand = new RelayCommand(_host.Updates.OpenReleasePage);
+        _host.Updates.Changed += OnUpdatesChanged;
     }
+
+    public ICommand CheckUpdatesCommand { get; }
+    public ICommand InstallUpdateCommand { get; }
+    public ICommand OpenReleaseCommand { get; }
 
     private AppSettings S => _host.SettingsStore.Settings;
     private BackupSettings B => S.Backup;
@@ -53,6 +62,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _host.Updates.Changed -= OnUpdatesChanged;
         if (_dirty) SaveScript();
     }
 
@@ -124,6 +134,63 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
             S.Terminal = (TerminalMode)value;
             Save();
         }
+    }
+
+    // ---------- global shortcut ----------
+
+    public string HotkeyText
+    {
+        get => S.GlobalHotkey ?? "";
+        set
+        {
+            S.GlobalHotkey = string.IsNullOrWhiteSpace(value) ? "" : value;
+            _host.SettingsStore.Save();
+            _host.ApplyHotkey();
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HotkeyStatus));
+        }
+    }
+
+    public string HotkeyStatus =>
+        string.IsNullOrEmpty(S.GlobalHotkey) ? L.Get("Hotkey.Off")
+        : _host.ActiveHotkey != null ? L.Get("Hotkey.Works")
+        : L.Get("Hotkey.Taken");
+
+    public void RefreshHotkeyStatus() => OnPropertyChanged(nameof(HotkeyStatus));
+
+    // ---------- updates ----------
+
+    public string VersionText => L.F("Update.Version", _host.Updates.Current.ToString(3)) + (AppPaths.IsSideBySide ? " [" + AppPaths.Instance + "]" : "");
+    public string UpdateStatus => _host.Updates.Status;
+    public bool UpdateAvailable => _host.Updates.Available != null && _host.Updates.CanInstall;
+    public string UpdateAvailableText => _host.Updates.Available is { } r ? L.F("Update.Available", r.Version.ToString(3)) : "";
+    public double UpdateProgress => _host.Updates.Progress * 100;
+    public bool UpdateBusy => _host.Updates.Busy;
+
+    public bool CheckUpdates
+    {
+        get => S.CheckUpdates;
+        set
+        {
+            S.CheckUpdates = value;
+            Save();
+        }
+    }
+
+    private void OnUpdatesChanged()
+    {
+        foreach (var p in new[] { nameof(UpdateStatus), nameof(UpdateAvailable), nameof(UpdateAvailableText), nameof(UpdateProgress), nameof(UpdateBusy) })
+            OnPropertyChanged(p);
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    private async void InstallUpdate()
+    {
+        if (_host.Updates.Available is not { } r) return;
+        if (MessageBox.Show(Application.Current.MainWindow, L.F("Update.Confirm", r.Version.ToString(3)), L.Get("Update.Title"),
+                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes) != MessageBoxResult.Yes)
+            return;
+        await _host.Updates.InstallAsync();
     }
 
     public bool TerminalIntegration

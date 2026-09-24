@@ -30,6 +30,18 @@
   #suggest .lb b { color: var(--pop-match); font-weight: normal; }
   #suggest .dt { color: var(--muted); font: 12px "Segoe UI", sans-serif; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; max-width: 260px; margin-left: 12px; }
   #suggest .hint { color: var(--muted); font: 11px "Segoe UI", sans-serif; padding: 3px 10px 1px; border-top: 1px solid var(--pop-border); margin-top: 3px; }
+  /* right-click menu */
+  #menu {
+    position: absolute; z-index: 30; display: none; min-width: 200px; padding: 4px;
+    background: var(--pop-bg); border: 1px solid var(--pop-border); border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.35);
+    font: 13px "Segoe UI", sans-serif; color: var(--fg);
+  }
+  #menu .mi { display: flex; align-items: center; gap: 10px; padding: 5px 10px; border-radius: 4px; cursor: default; white-space: nowrap; }
+  #menu .mi:hover { background: var(--pop-sel); }
+  #menu .mi.off { opacity: .45; pointer-events: none; }
+  #menu .mi .ic { font: 13px "Segoe Fluent Icons", "Segoe MDL2 Assets"; width: 16px; text-align: center; }
+  #menu .mi .k { margin-left: auto; padding-left: 24px; color: var(--muted); font-size: 12px; }
+  #menu .sep { height: 1px; margin: 4px 6px; background: var(--pop-border); }
   #ghost { position: absolute; z-index: 10; display: none; pointer-events: none; white-space: pre; color: var(--ghost); overflow: hidden; }
 </style>
 </head>
@@ -38,6 +50,7 @@
 <div id="banner"></div>
 <div id="ghost"></div>
 <div id="suggest"></div>
+<div id="menu"></div>
 <script src="vendor/xterm.js"></script>
 <script src="vendor/addon-fit.js"></script>
 <script src="vendor/addon-web-links.js"></script>

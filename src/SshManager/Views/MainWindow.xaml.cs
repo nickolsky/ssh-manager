@@ -24,7 +24,7 @@ public partial class MainWindow : Window
         _vm = new MainViewModel(host) { Owner = this };
         DataContext = _vm;
         Icon = IconFactory.CreateImage(true);
-        Title = AppPaths.ProductTitle;
+        Title = $"{AppPaths.ProductTitle} {Core.Updates.UpdateService.Current.ToString(3)}";
 
         var s = host.SettingsStore.Settings;
         Width = Math.Max(MinWidth, s.WindowWidth);
@@ -274,6 +274,38 @@ public partial class MainWindow : Window
         };
         if (focus != null) Dispatcher.BeginInvoke(focus, System.Windows.Threading.DispatcherPriority.Input);
     }
+
+    // ---------- global shortcut box (Settings) ----------
+
+    private void OnHotkeyFocus(object sender, KeyboardFocusChangedEventArgs e) => _host.SuspendHotkey();
+
+    private void OnHotkeyBlur(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        _host.ApplyHotkey();
+        _vm.Settings.RefreshHotkeyStatus();
+    }
+
+    private void OnHotkeyKeyDown(object sender, KeyEventArgs e)
+    {
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        e.Handled = true;
+        if (key is Key.Tab) { e.Handled = false; return; }
+        if (key is Key.Back or Key.Delete && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            _vm.Settings.HotkeyText = "";
+            _host.SuspendHotkey();
+            return;
+        }
+        var win = Keyboard.IsKeyDown(Key.LWin) || Keyboard.IsKeyDown(Key.RWin);
+        if (GlobalHotkey.FromKeyPress(Keyboard.Modifiers, key, win) is not { } combo) return;
+        _vm.Settings.HotkeyText = combo;
+        // stays off while the box has the focus; the new one works once it loses it
+        _host.SuspendHotkey();
+        ServersTree.Focus();
+    }
+
+    private void OnHotkeyDefault(object sender, RoutedEventArgs e) => _vm.Settings.HotkeyText = GlobalHotkey.Default;
+    private void OnHotkeyClear(object sender, RoutedEventArgs e) => _vm.Settings.HotkeyText = "";
 
     // ---------- column widths (all but the last column, which fills) ----------
 

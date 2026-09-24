@@ -29,6 +29,7 @@ public sealed partial class AppHost : IDisposable
     private readonly DispatcherTimer _idleTimer;
     private readonly DispatcherTimer _backupTimer;
     private TrayIcon? _tray;
+    private GlobalHotkey? _hotkey;
     private MainWindow? _main;
     private Task<bool>? _unlockTask;
     private DateTime _lastUnlockCancel = DateTime.MinValue;
@@ -50,6 +51,7 @@ public sealed partial class AppHost : IDisposable
         Forwards = new PortForwardService(Vault, Ssh);
         Backup = new BackupService(Vault, SettingsStore, Ssh);
         Scripts = new ScriptRunner(Ssh);
+        Updates = new UpdateManager(this);
         Control = new ControlServer(HandleControlAsync);
 
         Health.WentDown += (_, t) => _ui.BeginInvoke(() => OnServerDown(t));
@@ -82,6 +84,10 @@ public sealed partial class AppHost : IDisposable
     public PortForwardService Forwards { get; }
     public BackupService Backup { get; }
     public ScriptRunner Scripts { get; }
+    public UpdateManager Updates { get; }
+
+    /// <summary>A tray notification (clicking it opens the main window).</summary>
+    public void Notify(string title, string text) => _tray?.Balloon(title, text);
     public ControlServer Control { get; }
 
     public event EventHandler? StateChanged;
@@ -91,6 +97,9 @@ public sealed partial class AppHost : IDisposable
         Agent.Start();
         Control.Start();
         _tray = new TrayIcon(this);
+        Updates.Start();
+        _hotkey = new GlobalHotkey(ToggleMainWindow);
+        ApplyHotkey();
         _idleTimer.Start();
         _backupTimer.Start();
 
@@ -142,6 +151,26 @@ public sealed partial class AppHost : IDisposable
     }
 
     public void OnMainWindowClosed() => _main = null;
+
+    /// <summary>The global shortcut: brings the window up, or hides it when it is already in front.</summary>
+    public void ToggleMainWindow()
+    {
+        if (_main is { IsVisible: true, IsActive: true, WindowState: not WindowState.Minimized })
+        {
+            if (SettingsStore.Settings.CloseToTray) _main.Hide();
+            else _main.WindowState = WindowState.Minimized;
+            return;
+        }
+        ShowMainWindow();
+    }
+
+    /// <summary>(Re)registers the shortcut from the settings; false when it is taken or not valid.</summary>
+    public bool ApplyHotkey() => _hotkey?.Set(SettingsStore.Settings.GlobalHotkey) ?? false;
+
+    /// <summary>Off while the settings box records a new shortcut (so pressing the old one is not swallowed).</summary>
+    public void SuspendHotkey() => _hotkey?.Set(null);
+
+    public string? ActiveHotkey => _hotkey?.Current;
 
     /// <summary>Unlock (or first-run create) dialog. Must run on the UI thread.</summary>
     private bool ShowUnlockDialog()
@@ -518,5 +547,7 @@ public sealed partial class AppHost : IDisposable
         Control.Dispose();
         _tray?.Dispose();
         _tray = null;
+        _hotkey?.Dispose();
+        _hotkey = null;
     }
 }

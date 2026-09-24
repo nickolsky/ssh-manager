@@ -129,7 +129,15 @@ public sealed class TerminalView : Border, IDisposable
                 _ready = true;
                 (_cols, _rows) = (Math.Max(10, I("cols")), Math.Max(2, I("rows")));
                 SendTheme();
-                Post(new { t = "config", auto = _autoSuggest, hint = L.Get("Term.SuggestHint") });
+                Post(new
+                {
+                    t = "config", auto = _autoSuggest, hint = L.Get("Term.SuggestHint"),
+                    menu = new
+                    {
+                        copy = L.Get("Term.MenuCopy"), paste = L.Get("Term.MenuPaste"), selectAll = L.Get("Term.MenuSelectAll"),
+                        clear = L.Get("Term.MenuClear"), files = L.Get("Tab.Files"), dup = L.Get("Tab.NewTerminal"),
+                    },
+                });
                 Connect();
                 break;
             case "in":

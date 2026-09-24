@@ -1,13 +1,24 @@
 using System.Collections.ObjectModel;
+using System.Text.RegularExpressions;
 using SshManager.Core.Files;
 using SshManager.Mvvm;
 
 namespace SshManager.ViewModels;
 
 /// <summary>One row of a file panel; ".." (up) is the first row of every folder but the top.</summary>
-public sealed class FileRow(FileItem item, bool isParent = false)
+public sealed class FileRow(FileItem item, bool isParent = false) : ObservableObject
 {
+    private bool _marked;
+
     public FileItem Item { get; } = item;
+
+    /// <summary>Marked for an operation (Insert, a mask), Far style; the cursor is the grid's selected row.</summary>
+    public bool IsMarked
+    {
+        get => _marked;
+        set => Set(ref _marked, value && !IsParent);
+    }
+
     public bool IsParent { get; } = isParent;
     public bool IsDirectory => IsParent || Item.IsDirectory;
     public string Name => IsParent ? ".." : Item.Name;
@@ -43,6 +54,7 @@ public sealed class FilePanelModel : ObservableObject
     private bool _busy;
     private string? _error;
     private string _status = "";
+    private string _baseStatus = "";
     private bool _showHidden;
     private List<FileItem> _all = [];
 
@@ -193,8 +205,57 @@ public sealed class FilePanelModel : ObservableObject
         var files = visible.Count - dirs;
         var size = visible.Where(i => !i.IsDirectory).Sum(i => i.Size);
         var hidden = _all.Count - visible.Count;
-        Status = L.F("Files.Status", dirs, files, FileRow.FormatSize(size)) + (hidden > 0 ? " · " + L.F("Files.HiddenCount", hidden) : "");
+        _baseStatus = L.F("Files.Status", dirs, files, FileRow.FormatSize(size)) + (hidden > 0 ? " · " + L.F("Files.HiddenCount", hidden) : "");
+        UpdateStatus();
         SelectRequested?.Invoke(select);
+    }
+
+    // ---------- marks ----------
+
+    public List<FileRow> Marked => Rows.Where(r => r.IsMarked).ToList();
+
+    public void UpdateStatus()
+    {
+        var marked = Marked;
+        Status = marked.Count == 0
+            ? _baseStatus
+            : L.F("Files.Marked", marked.Count, FileRow.FormatSize(marked.Where(r => !r.IsDirectory).Sum(r => r.Item.Size))) + " · " + _baseStatus;
+    }
+
+    /// <summary>Far's Gray+ / Gray-: files (not folders) whose names match "*.yml;*.conf".</summary>
+    public int MarkByMask(string mask, bool on)
+    {
+        var re = MaskRegex(mask);
+        var n = 0;
+        foreach (var r in Rows.Where(r => !r.IsParent && !r.IsDirectory && re.IsMatch(r.Name)))
+        {
+            r.IsMarked = on;
+            n++;
+        }
+        UpdateStatus();
+        return n;
+    }
+
+    public void InvertMarks()
+    {
+        foreach (var r in Rows.Where(r => !r.IsParent && !r.IsDirectory)) r.IsMarked = !r.IsMarked;
+        UpdateStatus();
+    }
+
+    public void MarkAll(bool on)
+    {
+        foreach (var r in Rows) r.IsMarked = on;
+        UpdateStatus();
+    }
+
+    /// <summary>"*.*" is everything (with or without an extension), ';' ',' or spaces separate masks.</summary>
+    public static Regex MaskRegex(string mask)
+    {
+        var parts = mask.Split([';', ',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(m => m == "*.*" ? "*" : m)
+            .Select(m => "^" + Regex.Escape(m).Replace(@"\*", ".*").Replace(@"\?", ".") + "$");
+        var pattern = string.Join("|", parts);
+        return new Regex(pattern.Length == 0 ? "^$" : pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     /// <summary>After a refresh: select the row with this name (or the first one).</summary>
