@@ -48,6 +48,7 @@ public class E2ETests
         Assert.Null(facts.InventoryError);
         Assert.NotNull(facts.OsId);
         Assert.NotNull(facts.Kernel);
+        Assert.Contains(facts.ListeningPorts, p => p.Port == 22 && !p.LocalOnly);
 
         var metrics = new Core.Monitoring.MetricsCollector(ssh);
         await metrics.CollectAsync(server);
@@ -59,6 +60,8 @@ public class E2ETests
         var health = await Core.Monitoring.HealthMonitor.ProbeAsync(t.Host, t.Port, TimeSpan.FromSeconds(5));
         Assert.Equal(Core.Monitoring.HealthState.Online, health.State);
         Assert.Null(health.Error);
+        var closed = await Core.Monitoring.HealthMonitor.ProbeAsync(t.Host, 1, TimeSpan.FromSeconds(3), expectSsh: false);
+        Assert.Equal(Core.Monitoring.HealthState.Offline, closed.State);
 
         var fwd = new Core.Forwarding.PortForwardService(vault, ssh);
         var logs = new List<string>();

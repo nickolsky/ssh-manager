@@ -129,6 +129,43 @@ public class InventoryParserTests
     }
 
     [Fact]
+    public void Listening_Ports_From_Ss_And_Netstat()
+    {
+        var ss = ListeningPortParser.Parse("""
+            LISTEN 0 4096 0.0.0.0:443 0.0.0.0:* users:(("xray",pid=812,fd=3))
+            LISTEN 0 4096 [::]:443 [::]:* users:(("xray",pid=812,fd=4))
+            LISTEN 0 128 127.0.0.53%lo:53 0.0.0.0:* users:(("systemd-resolve",pid=500,fd=14))
+            LISTEN 0 128 0.0.0.0:22 0.0.0.0:*
+            """);
+        Assert.Equal([22, 53, 443], ss.Select(p => p.Port).ToArray());
+        var https = ss.Single(p => p.Port == 443);
+        Assert.Equal("xray", https.Process);
+        Assert.Equal("0.0.0.0, [::]", https.Addresses);
+        Assert.True(ss.Single(p => p.Port == 53).LocalOnly);
+        Assert.False(ss.Single(p => p.Port == 22).LocalOnly);
+
+        var netstat = ListeningPortParser.Parse("""
+            Active Internet connections (only servers)
+            Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
+            tcp        0      0 0.0.0.0:2053            0.0.0.0:*               LISTEN      901/x-ui
+            tcp6       0      0 ::1:6379                :::*                    LISTEN      77/redis-server
+            """);
+        Assert.Equal("x-ui", netstat.Single(p => p.Port == 2053).Process);
+        Assert.True(netstat.Single(p => p.Port == 6379).LocalOnly);
+    }
+
+    [Fact]
+    public void Server_Clone_Copies_Monitored_Ports()
+    {
+        var s = new ServerEntry { MonitoredPorts = [new MonitoredPort { Port = 443 }] };
+        var c = s.Clone();
+        c.MonitoredPorts.Add(new MonitoredPort { Port = 80 });
+        c.MonitoredPorts[0].Name = "x";
+        Assert.Single(s.MonitoredPorts);
+        Assert.Null(s.MonitoredPorts[0].Name);
+    }
+
+    [Fact]
     public void Sections_Apply_To_Facts()
     {
         var sections = SectionParser.Split("""

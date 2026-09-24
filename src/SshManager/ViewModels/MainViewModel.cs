@@ -70,6 +70,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         RefreshInfoCommand = new RelayCommand(() => _host.RefreshServer(SelectedServer!.Entry.Id), HasServer);
         CheckNowCommand = new RelayCommand(() => _host.Health.CheckNow(SelectedServer!.Entry.Id), HasServer);
         PortForwardsCommand = new RelayCommand(OpenPortForwards, HasServer);
+        PortMonitorCommand = new RelayCommand(OpenPortMonitor, HasServer);
+        TogglePortCommand = new RelayCommand(TogglePort, () => SelectedNode is PortNode { CanMonitor: true });
         RunScriptCommand = new RelayCommand(p => RunScript(p as ScriptEntry), _ => HasServer());
         ContainerLogsCommand = new RelayCommand(() => QuickAction(n => n is ContainerNode c ? ScriptRunner.DockerLogs(n.Server!.Entry, c.Info.Name) : null, "docker logs"), () => SelectedNode is ContainerNode);
         ContainerRestartCommand = new RelayCommand(() => QuickAction(n => n is ContainerNode c ? ScriptRunner.DockerRestart(n.Server!.Entry, c.Info.Name) : null, "docker restart"), () => SelectedNode is ContainerNode);
@@ -140,6 +142,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ContainerNode => "container",
         ServiceNode => "service",
         ForwardNode => "forward",
+        PortNode { Monitored: not null } => "port-on",
+        PortNode => "port-off",
         GroupNode => "group",
         null => "",
         _ => "other",
@@ -216,6 +220,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ICommand RefreshInfoCommand { get; }
     public ICommand CheckNowCommand { get; }
     public ICommand PortForwardsCommand { get; }
+    public ICommand PortMonitorCommand { get; }
+    public ICommand TogglePortCommand { get; }
     public ICommand RunScriptCommand { get; }
     public ICommand ContainerLogsCommand { get; }
     public ICommand ContainerRestartCommand { get; }
@@ -264,7 +270,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private void OnHealthChanged(object? s, Guid id) => Ui(() =>
     {
         if (!_serverNodes.TryGetValue(id, out var node)) return;
-        node.SetHealth(_host.Health.Get(id));
+        node.SetHealth(_host.Health.Get(id), _host.Health.GetPorts(id));
         UpdateGroupCounts();
         OnPropertyChanged(nameof(Summary));
     });
@@ -375,7 +381,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 var parts = SplitGroup(s.Group);
                 var parent = Group(parts);
                 var node = new ServerNode(this, parts.Length, s, parent);
-                node.SetHealth(_host.Health.Get(s.Id));
+                node.SetHealth(_host.Health.Get(s.Id), _host.Health.GetPorts(s.Id));
                 node.SetMetrics(_host.Metrics.Get(s.Id));
                 node.SetLoading(_host.Inventory.IsRunning(s.Id));
                 node.IsExpanded = _expandedServers.Contains(s.Id);
@@ -423,6 +429,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var servers = Descendants(g).OfType<ServerNode>().ToList();
             g.ServerCount = servers.Count;
             g.OfflineCount = servers.Count(s => s.Health.State == HealthState.Offline);
+            g.WarnCount = servers.Count(s => s.Health.State == HealthState.Online && s.DownPorts.Count > 0);
             g.Refresh();
         }
     }
@@ -645,6 +652,29 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         if (SelectedServer == null) return;
         new PortForwardWindow(_host, SelectedServer.Entry.Clone(), this) { Owner = Owner }.Show();
+    }
+
+    private void OpenPortMonitor()
+    {
+        if (SelectedServer == null) return;
+        new PortMonitorWindow(_host, SelectedServer.Entry.Id) { Owner = Owner }.ShowDialog();
+    }
+
+    /// <summary>Switches monitoring of the selected port node on or off.</summary>
+    private void TogglePort()
+    {
+        if (SelectedNode is not PortNode { Server: { } server } node) return;
+        var id = server.Entry.Id;
+        var on = node.Monitored == null;
+        _host.Vault.Update(d =>
+        {
+            var s = d.Servers.FirstOrDefault(x => x.Id == id);
+            if (s == null) return;
+            s.MonitoredPorts.RemoveAll(p => p.Port == node.Port);
+            if (on) s.MonitoredPorts.Add(new MonitoredPort { Port = node.Port, Name = node.Listening?.Process });
+        });
+        _host.Health.CheckNow(id);
+        Status = L.F(on ? "Port.MonitorOn" : "Port.MonitorOff", node.Port, server.Entry.Name);
     }
 
     private async void RunScript(ScriptEntry? script)

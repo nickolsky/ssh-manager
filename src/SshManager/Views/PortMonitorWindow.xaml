@@ -1,0 +1,59 @@
+<Window x:Class="SshManager.Views.PortMonitorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:SshManager.Localization"
+        Title="{l:Tr PortMon.Title}" Width="640" Height="520" MinWidth="520" MinHeight="380"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Grid Margin="20,14,20,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock x:Name="Header" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock Grid.Row="1" Style="{StaticResource Hint}" Text="{l:Tr PortMon.Hint}" Margin="0,6,0,10" />
+
+        <DataGrid Grid.Row="2" x:Name="PortsGrid" AutoGenerateColumns="False" SelectionMode="Single" CanUserAddRows="False"
+                  CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None">
+            <DataGrid.Columns>
+                <DataGridTemplateColumn Header="{l:Tr PortMon.Monitor}" Width="90">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <CheckBox IsChecked="{Binding Monitor, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanMonitor}"
+                                      HorizontalAlignment="Center" MinWidth="0" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="{l:Tr PortMon.Port}" Binding="{Binding Port}" IsReadOnly="True" Width="70" />
+                <DataGridTextColumn Header="{l:Tr PortMon.Name}" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                <DataGridTextColumn Header="{l:Tr PortMon.Source}" Binding="{Binding Source}" IsReadOnly="True" Width="180" />
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <Grid Grid.Row="3" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="90" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="NewPort" ToolTip="{l:Tr PortMon.Port}" />
+            <TextBox x:Name="NewName" Grid.Column="2" ToolTip="{l:Tr PortMon.Name}" />
+            <Button Grid.Column="4" Content="{l:Tr PortMon.Add}" Click="OnAdd" MinWidth="100" />
+        </Grid>
+
+        <DockPanel Grid.Row="5" Margin="0,16,0,0">
+            <Button DockPanel.Dock="Left" x:Name="DetectButton" Content="{l:Tr PortMon.Detect}" Click="OnDetect" Padding="12,5" />
+            <ProgressBar x:Name="Busy" DockPanel.Dock="Left" IsIndeterminate="True" Width="80" Height="4" Margin="12,0,0,0" Visibility="Hidden" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="{l:Tr Common.Save}" IsDefault="True" Click="OnSave" Style="{DynamicResource AccentButtonStyle}" MinWidth="110" />
+                <Button Content="{l:Tr Common.Cancel}" IsCancel="True" Style="{StaticResource DialogButton}" />
+            </StackPanel>
+        </DockPanel>
+        <TextBlock x:Name="Error" Grid.Row="4" Foreground="#E0443E" TextWrapping="Wrap" Margin="0,8,0,0" Visibility="Collapsed" />
+    </Grid>
+</Window>

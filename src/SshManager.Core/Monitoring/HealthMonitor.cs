@@ -26,6 +26,8 @@ public sealed record ServerHealth(HealthState State, int? LatencyMs = null, Date
 
 public sealed record HealthTransition(Guid ServerId, ServerHealth Before, ServerHealth After);
 
+public sealed record PortTransition(Guid ServerId, MonitoredPort Port, ServerHealth After);
+
 /// <summary>
 /// Periodically opens a TCP connection to each server's SSH port and reads the "SSH-" banner.
 /// ICMP is not used: VPN hosts often drop it.
@@ -38,6 +40,7 @@ public sealed class HealthMonitor : IDisposable
     private readonly VaultService _vault;
     private readonly SettingsService _settings;
     private readonly ConcurrentDictionary<Guid, ServerHealth> _health = new();
+    private readonly ConcurrentDictionary<Guid, IReadOnlyDictionary<int, ServerHealth>> _ports = new();
     private readonly ConcurrentDictionary<Guid, DateTime> _due = new();
     private readonly ConcurrentDictionary<Guid, byte> _inFlight = new();
     private readonly SemaphoreSlim _gate = new(8);
@@ -52,10 +55,16 @@ public sealed class HealthMonitor : IDisposable
     public event EventHandler<Guid>? HealthChanged;
     /// <summary>A server went from online to offline.</summary>
     public event EventHandler<HealthTransition>? WentDown;
+    /// <summary>A monitored port stopped answering while the server itself is up.</summary>
+    public event EventHandler<PortTransition>? PortWentDown;
     /// <summary>A check succeeded (used to collect CPU / memory right after).</summary>
     public event EventHandler<ServerEntry>? ServerOnline;
 
     public ServerHealth Get(Guid id) => _health.TryGetValue(id, out var h) ? h : ServerHealth.Unknown;
+
+    /// <summary>State of each monitored port by port number (empty until checked).</summary>
+    public IReadOnlyDictionary<int, ServerHealth> GetPorts(Guid id) =>
+        _ports.TryGetValue(id, out var p) ? p : new Dictionary<int, ServerHealth>();
 
     public void Start()
     {
@@ -67,6 +76,7 @@ public sealed class HealthMonitor : IDisposable
         _timer?.Dispose();
         _timer = null;
         _health.Clear();
+        _ports.Clear();
         _due.Clear();
     }
 
@@ -98,6 +108,7 @@ public sealed class HealthMonitor : IDisposable
         foreach (var gone in _health.Keys.Where(k => !ids.Contains(k)).ToList())
         {
             _health.TryRemove(gone, out _);
+            _ports.TryRemove(gone, out _);
             _due.TryRemove(gone, out _);
         }
         var now = DateTime.UtcNow;
@@ -130,14 +141,16 @@ public sealed class HealthMonitor : IDisposable
                 Set(s.Id, previous with { State = HealthState.Checking });
             await _gate.WaitAsync();
             ServerHealth result;
+            var ports = new Dictionary<int, ServerHealth>();
             try
             {
-                result = await ProbeAsync(s.Host, s.Port, ProbeTimeout);
-                // one retry before declaring a server down, to ride out a dropped packet
-                if (result.State == HealthState.Offline)
+                result = await ProbeWithRetryAsync(s.Host, s.Port, expectSsh: true);
+                if (result.State == HealthState.Online)
                 {
-                    await Task.Delay(3000);
-                    result = await ProbeAsync(s.Host, s.Port, ProbeTimeout);
+                    var checks = s.MonitoredPorts.Where(p => p.Port != s.Port).DistinctBy(p => p.Port)
+                        .Select(async p => (p.Port, await ProbeWithRetryAsync(s.Host, p.Port, expectSsh: false)));
+                    foreach (var (port, h) in await Task.WhenAll(checks)) ports[port] = h;
+                    if (s.MonitoredPorts.Any(p => p.Port == s.Port)) ports[s.Port] = result with { Error = null };
                 }
             }
             finally
@@ -145,7 +158,15 @@ public sealed class HealthMonitor : IDisposable
                 _gate.Release();
             }
             _due[s.Id] = DateTime.UtcNow + TimeSpan.FromMinutes(Math.Max(1, interval <= 0 ? 60 : interval));
+            var previousPorts = GetPorts(s.Id);
+            _ports[s.Id] = ports;
             Set(s.Id, result);
+            foreach (var p in s.MonitoredPorts)
+            {
+                if (previousPorts.TryGetValue(p.Port, out var before) && before.State == HealthState.Online &&
+                    ports.TryGetValue(p.Port, out var after) && after.State == HealthState.Offline)
+                    PortWentDown?.Invoke(this, new PortTransition(s.Id, p, after));
+            }
             if (previous.State == HealthState.Online && result.State == HealthState.Offline)
                 WentDown?.Invoke(this, new HealthTransition(s.Id, previous, result));
             if (result.State == HealthState.Online) ServerOnline?.Invoke(this, s);
@@ -162,7 +183,17 @@ public sealed class HealthMonitor : IDisposable
         HealthChanged?.Invoke(this, id);
     }
 
-    public static async Task<ServerHealth> ProbeAsync(string host, int port, TimeSpan timeout)
+    /// <summary>One retry before declaring something down, to ride out a dropped packet.</summary>
+    private static async Task<ServerHealth> ProbeWithRetryAsync(string host, int port, bool expectSsh)
+    {
+        var r = await ProbeAsync(host, port, ProbeTimeout, expectSsh);
+        if (r.State != HealthState.Offline) return r;
+        await Task.Delay(3000);
+        return await ProbeAsync(host, port, ProbeTimeout, expectSsh);
+    }
+
+    /// <param name="expectSsh">Read the greeting and flag a non-SSH answer; otherwise an accepted connection is enough.</param>
+    public static async Task<ServerHealth> ProbeAsync(string host, int port, TimeSpan timeout, bool expectSsh = true)
     {
         var sw = Stopwatch.StartNew();
         using var cts = new CancellationTokenSource(timeout);
@@ -171,6 +202,7 @@ public sealed class HealthMonitor : IDisposable
         {
             await tcp.ConnectAsync(host, port, cts.Token);
             var latency = (int)sw.ElapsedMilliseconds;
+            if (!expectSsh) return new ServerHealth(HealthState.Online, latency, DateTime.Now);
             var buffer = new byte[256];
             string banner = "";
             try

@@ -62,6 +62,8 @@ public abstract class TreeNode(int level) : ObservableObject
     public virtual double? MemPercent => null;
     public virtual string Mem => "";
     public virtual string? UsageTip => null;
+    /// <summary>Monitored ports shown as small chips in the server row.</summary>
+    public virtual IReadOnlyList<PortChip> PortChips => [];
     public virtual string LastConnected => "";
     public virtual string Notes => "";
 
@@ -71,19 +73,23 @@ public abstract class TreeNode(int level) : ObservableObject
     protected void RaiseAll() => OnPropertyChanged(string.Empty);
 }
 
+public sealed record PortChip(string Label, string Dot, string? Tip);
+
 public sealed class GroupNode(int level, string path, string name, Action<GroupNode> expandedChanged) : TreeNode(level)
 {
     public string Path { get; } = path;
     public string Name { get; } = name;
     public int ServerCount { get; set; }
     public int OfflineCount { get; set; }
+    /// <summary>Servers that are up but have a monitored port down.</summary>
+    public int WarnCount { get; set; }
 
     public override string Title => Name;
     public override string Badge => ServerCount.ToString();
     public override string Icon => IsExpanded ? "" : ""; // FolderOpen / Folder
     public override bool IsBold => true;
     public override string Address => OfflineCount > 0 ? L.F("Tree.GroupOffline", OfflineCount) : "";
-    public override string Dot => OfflineCount > 0 ? "bad" : "";
+    public override string Dot => OfflineCount > 0 ? "bad" : WarnCount > 0 ? "warn" : "";
 
     /// <summary>Suppresses persisting while the tree is built or a search forces groups open.</summary>
     public bool Silent { get; set; }
@@ -171,7 +177,7 @@ public sealed class ServerNode : TreeNode
 
     public override string Dot => Health.State switch
     {
-        HealthState.Online => Health.Error == null ? "ok" : "warn",
+        HealthState.Online => Health.Error == null && DownPorts.Count == 0 ? "ok" : "warn",
         HealthState.Offline => "bad",
         HealthState.Checking => "busy",
         _ => "off",
@@ -180,7 +186,8 @@ public sealed class ServerNode : TreeNode
     public override string? Tip => Health.State switch
     {
         HealthState.Online => L.F("Health.OnlineTip", Health.LatencyMs, Health.Checked?.ToString("T", L.Culture)) +
-                              (Health.Error != null ? "\n" + Health.Error : ""),
+                              (Health.Error != null ? "\n" + Health.Error : "") +
+                              (DownPorts.Count > 0 ? "\n" + L.F("Health.PortsDown", string.Join(", ", DownPorts)) : ""),
         HealthState.Offline => L.F("Health.OfflineTip", Health.Checked?.ToString("T", L.Culture), Health.Error),
         HealthState.Checking => L.Get("Health.Checking"),
         HealthState.Disabled => L.Get("Health.Disabled"),
@@ -194,11 +201,35 @@ public sealed class ServerNode : TreeNode
         OnPropertyChanged(nameof(ForwardsTip));
     }
 
-    public void SetHealth(ServerHealth health)
+    public IReadOnlyDictionary<int, ServerHealth> PortHealth { get; private set; } = new Dictionary<int, ServerHealth>();
+
+    /// <summary>Monitored ports that did not answer on the last check.</summary>
+    public List<int> DownPorts => Entry.MonitoredPorts.Select(p => p.Port)
+        .Where(p => PortHealth.TryGetValue(p, out var h) && h.State == HealthState.Offline).Order().ToList();
+
+    public string PortDot(int port) => PortHealth.TryGetValue(port, out var h)
+        ? h.State switch { HealthState.Online => "ok", HealthState.Offline => "bad", _ => "off" }
+        : "off";
+
+    public string? PortTip(int port) => PortHealth.TryGetValue(port, out var h)
+        ? h.State == HealthState.Online
+            ? L.F("Port.OpenTip", port, h.LatencyMs, h.Checked?.ToString("T", L.Culture))
+            : L.F("Port.ClosedTip", port, h.Checked?.ToString("T", L.Culture), h.Error)
+        : L.F("Port.NotCheckedTip", port);
+
+    public override IReadOnlyList<PortChip> PortChips => Entry.MonitoredPorts.OrderBy(p => p.Port)
+        .Select(p => new PortChip(p.Port.ToString(), PortDot(p.Port), (p.Name is { Length: > 0 } n ? n + "\n" : "") + PortTip(p.Port)))
+        .ToList();
+
+    public void SetHealth(ServerHealth health, IReadOnlyDictionary<int, ServerHealth> ports)
     {
         Health = health;
+        PortHealth = ports;
         OnPropertyChanged(nameof(Dot));
         OnPropertyChanged(nameof(Tip));
+        OnPropertyChanged(nameof(PortChips));
+        foreach (var n in Children.OfType<SectionNode>().Where(c => c.Key == "ports").SelectMany(c => c.Children).OfType<PortNode>())
+            n.Refresh();
     }
 
     public override double? CpuPercent => Metrics?.CpuPercent;
@@ -272,6 +303,7 @@ public sealed class ServerNode : TreeNode
         if (f?.InventoryUpdated == null)
         {
             Children.Add(new InfoNode(level, Loading ? L.Get("Tree.Loading") : f?.InventoryError ?? L.Get("Tree.NoData"), this));
+            AddPorts(f);
             return;
         }
         if (f.InventoryError != null) Children.Add(new InfoNode(level, L.Get("Tree.Error") + " " + f.InventoryError, this));
@@ -297,6 +329,21 @@ public sealed class ServerNode : TreeNode
             foreach (var (from, p) in incoming)
                 fw.Children.Add(new ForwardNode(level + 1, L.F("Tree.Incoming", from.Name, p.Protocol, p.ListenPort, p.EffectiveTargetPort), null, fw));
         }
+
+        AddPorts(f);
+    }
+
+    /// <summary>Monitored ports plus the ones the server listens on (so they can be switched on for monitoring).</summary>
+    private void AddPorts(ServerFacts? f)
+    {
+        var listening = (f?.ListeningPorts ?? []).ToDictionary(p => p.Port);
+        var monitored = Entry.MonitoredPorts.DistinctBy(p => p.Port).ToDictionary(p => p.Port);
+        var all = listening.Keys.Union(monitored.Keys).Order().ToList();
+        if (all.Count == 0) return;
+        var section = Section("ports", L.F("Tree.PortsSection", monitored.Count, all.Count), "\uE839");
+        foreach (var port in all.OrderBy(p => monitored.ContainsKey(p) ? 0 : 1).ThenBy(p => p))
+            section.Children.Add(new PortNode(Level + 2, this, port, monitored.GetValueOrDefault(port),
+                listening.GetValueOrDefault(port), section));
     }
 
     private SectionNode Section(string key, string title, string icon)
@@ -397,4 +444,39 @@ public sealed class ForwardNode : TreeNode
     public override string Icon => Forward == null ? "" : ""; // back / forward arrows
     public override string Address => Forward == null ? "" : Forward.Managed ? "SSH Manager" : L.Get("Fwd.External");
     public override bool IsMuted => Forward == null;
+}
+
+public sealed class PortNode : TreeNode
+{
+    private readonly ServerNode _server;
+
+    public PortNode(int level, ServerNode server, int port, MonitoredPort? monitored, ListeningPort? listening, TreeNode parent)
+        : base(level)
+    {
+        _server = server;
+        Port = port;
+        Monitored = monitored;
+        Listening = listening;
+        Parent = parent;
+    }
+
+    public int Port { get; }
+    public MonitoredPort? Monitored { get; }
+    public ListeningPort? Listening { get; }
+    public bool CanMonitor => Monitored != null || Listening?.LocalOnly != true;
+
+    public override string Title => Monitored?.Name is { Length: > 0 } n ? $"{Port}  {n}"
+        : Listening?.Process is { Length: > 0 } p ? $"{Port}  {p}" : Port.ToString();
+
+    public override string Icon => "\uE839";
+    public override string Dot => Monitored == null ? "" : _server.PortDot(Port);
+    public override string? Tip => Monitored == null ? null : _server.PortTip(Port);
+    public override bool IsMuted => Monitored == null;
+    public override string Address => Listening?.Addresses ?? "";
+
+    public override string Os => Monitored != null
+        ? _server.PortDot(Port) switch { "ok" => L.Get("Port.Open"), "bad" => L.Get("Port.Closed"), _ => L.Get("Port.Monitored") }
+        : Listening?.LocalOnly == true ? L.Get("Port.LocalOnly") : L.Get("Port.NotMonitored");
+
+    public void Refresh() => RaiseAll();
 }

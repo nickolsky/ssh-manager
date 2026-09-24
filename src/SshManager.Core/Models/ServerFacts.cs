@@ -17,6 +17,8 @@ public sealed class ServerFacts
     public List<ContainerInfo> Containers { get; set; } = [];
     public List<ServiceInfo> Services { get; set; } = [];
     public List<PortForward> Forwards { get; set; } = [];
+    /// <summary>TCP ports the server listens on (ss -tlnp).</summary>
+    public List<ListeningPort> ListeningPorts { get; set; } = [];
     public GeoInfo? Geo { get; set; }
 
     /// <summary>"Ubuntu 24.04" style label.</summary>
@@ -50,6 +52,16 @@ public sealed class ContainerInfo
     public string Ports { get; set; } = "";
 
     public bool IsRunning => State.Equals("running", StringComparison.OrdinalIgnoreCase);
+}
+
+public sealed class ListeningPort
+{
+    public int Port { get; set; }
+    /// <summary>Bound addresses, e.g. "0.0.0.0, [::]".</summary>
+    public string Addresses { get; set; } = "";
+    public string? Process { get; set; }
+    /// <summary>Bound to loopback only — not reachable from outside, so it cannot be monitored.</summary>
+    public bool LocalOnly { get; set; }
 }
 
 public sealed class ServiceInfo

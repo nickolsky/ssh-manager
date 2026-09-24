@@ -53,6 +53,7 @@ public sealed partial class AppHost : IDisposable
         Control = new ControlServer(HandleControlAsync);
 
         Health.WentDown += (_, t) => _ui.BeginInvoke(() => OnServerDown(t));
+        Health.PortWentDown += (_, t) => _ui.BeginInvoke(() => OnPortDown(t));
         Health.ServerOnline += (_, s) =>
         {
             if (SettingsStore.Settings.CollectMetrics && KnownHosts.IsKnown(s.Host, s.Port)) _ = Metrics.CollectAsync(s);
@@ -290,6 +291,13 @@ public sealed partial class AppHost : IDisposable
         if (!SettingsStore.Settings.NotifyOnServerDown || !Vault.TryRead(d => d.Servers.FirstOrDefault(s => s.Id == t.ServerId)?.Name, out var name) || name == null)
             return;
         _tray?.Balloon(L.Get("Health.DownTitle"), L.F("Health.DownText", name, t.After.Error), System.Windows.Forms.ToolTipIcon.Warning);
+    }
+
+    private void OnPortDown(PortTransition t)
+    {
+        if (!SettingsStore.Settings.NotifyOnServerDown || !Vault.TryRead(d => d.Servers.FirstOrDefault(s => s.Id == t.ServerId)?.Name, out var name) || name == null)
+            return;
+        _tray?.Balloon(L.Get("Health.PortDownTitle"), L.F("Health.PortDownText", name, t.Port.Label, t.After.Error), System.Windows.Forms.ToolTipIcon.Warning);
     }
 
     // ---------- backup ----------

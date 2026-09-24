@@ -31,7 +31,7 @@ internal sealed class TrayIcon : IDisposable
     {
         var unlocked = _host.Vault.IsUnlocked;
         var old = _current;
-        _current = IconFactory.Create(unlocked);
+        _current = IconFactory.Create(unlocked, Math.Max(16, SystemInformation.SmallIconSize.Width));
         _icon.Icon = _current;
         old?.Dispose();
         var agent = _host.Agent.PipeName ?? L.Get("Tray.AgentNotRunning");

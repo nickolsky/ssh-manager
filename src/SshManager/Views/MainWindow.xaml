@@ -68,6 +68,37 @@
             </Style.Triggers>
         </Style>
 
+        <Style x:Key="MiPortOn" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="port-on">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="MiPortOff" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="port-off">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="MiPorts" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="server">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="port-on">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="port-off">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="InstallItemLeaf" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
             <Setter Property="Header" Value="{Binding Header}" />
             <Setter Property="Command" Value="{Binding Command}" />
@@ -203,7 +234,7 @@
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
-                                <GridViewColumn Header="{l:Tr Col.Address}" Width="170">
+                                <GridViewColumn Header="{l:Tr Col.Address}" Width="160">
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
                                             <TextBlock Text="{Binding Address}" Style="{StaticResource CellText}" />
@@ -247,7 +278,31 @@
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
-                                <GridViewColumn Header="{l:Tr Col.Region}" Width="150">
+                                <GridViewColumn Header="{l:Tr Col.Ports}" Width="130">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <ItemsControl ItemsSource="{Binding PortChips}" VerticalAlignment="Center">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <StackPanel Orientation="Horizontal" />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border CornerRadius="8" Padding="5,1,7,1" Margin="0,0,4,0" ToolTip="{Binding Tip}"
+                                                                Background="{DynamicResource SubtleFillColorTertiaryBrush}">
+                                                            <StackPanel Orientation="Horizontal">
+                                                                <Ellipse Style="{StaticResource StatusDot}" Width="7" Height="7" Margin="0,0,4,0" ToolTip="{Binding Tip}" />
+                                                                <TextBlock Text="{Binding Label}" FontSize="11" VerticalAlignment="Center" />
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="{l:Tr Col.Region}" Width="140">
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
                                             <StackPanel Orientation="Horizontal" ToolTip="{Binding RegionTip}" Background="Transparent">
@@ -259,7 +314,7 @@
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
-                                <GridViewColumn Header="{l:Tr Col.Forwards}" Width="170">
+                                <GridViewColumn Header="{l:Tr Col.Forwards}" Width="160">
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
                                             <TextBlock Text="{Binding Forwards}" ToolTip="{Binding ForwardsTip}" Style="{StaticResource CellText}" />
@@ -295,6 +350,9 @@
                                     <MenuItem Header="{l:Tr Ctx.Install}" Style="{StaticResource MiServer}"
                                               ItemsSource="{Binding InstallItems}" ItemContainerStyle="{StaticResource InstallItem}" />
                                     <MenuItem Header="{l:Tr Ctx.PortForwards}" Command="{Binding PortForwardsCommand}" Style="{StaticResource MiForward}" />
+                                    <MenuItem Header="{l:Tr Ctx.MonitorPort}" Command="{Binding TogglePortCommand}" FontWeight="SemiBold" Style="{StaticResource MiPortOff}" />
+                                    <MenuItem Header="{l:Tr Ctx.UnmonitorPort}" Command="{Binding TogglePortCommand}" Style="{StaticResource MiPortOn}" />
+                                    <MenuItem Header="{l:Tr Ctx.PortMonitor}" Command="{Binding PortMonitorCommand}" Style="{StaticResource MiPorts}" />
                                     <MenuItem Header="{l:Tr Ctx.RefreshInfo}" Command="{Binding RefreshInfoCommand}" Style="{StaticResource MiServer}" />
                                     <MenuItem Header="{l:Tr Ctx.CheckNow}" Command="{Binding CheckNowCommand}" Style="{StaticResource MiServer}" />
                                     <Separator Style="{StaticResource SepServer}" />

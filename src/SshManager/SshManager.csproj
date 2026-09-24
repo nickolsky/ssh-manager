@@ -6,6 +6,8 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyTitle>SSH Manager</AssemblyTitle>
+    <!-- regenerate with IconFactory.WriteIco after changing the drawing -->
+    <ApplicationIcon>Assets/app.ico</ApplicationIcon>
     <!-- Fluent ThemeMode is still flagged experimental -->
     <NoWarn>$(NoWarn);WPF0001</NoWarn>
   </PropertyGroup>
@@ -14,6 +16,10 @@
     <!-- WinForms is only used for the tray icon; keep WPF types unambiguous -->
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets/app.ico" />
   </ItemGroup>
 
   <ItemGroup>

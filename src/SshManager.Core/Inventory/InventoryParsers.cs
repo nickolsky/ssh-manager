@@ -99,6 +99,52 @@ public static class ServiceListParser
     }
 }
 
+/// <summary>Listening TCP sockets from <c>ss -Htlnp</c> (or <c>netstat -tlnp</c>), one entry per port.</summary>
+public static partial class ListeningPortParser
+{
+    [GeneratedRegex(@"users:\(\(""([^""]+)""")]
+    private static partial Regex SsProcess();
+
+    public static List<ListeningPort> Parse(string text)
+    {
+        var byPort = new SortedDictionary<int, (List<string> Addrs, string? Process)>();
+        foreach (var raw in text.Split('\n'))
+        {
+            var t = raw.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            // ss:      LISTEN 0 4096 0.0.0.0:443 0.0.0.0:* users:(("xray",pid=1,fd=3))
+            // netstat: tcp 0 0 0.0.0.0:22 0.0.0.0:* LISTEN 812/sshd
+            if (t.Length < 5 || t[0] is not ("LISTEN" or "tcp" or "tcp6")) continue;
+            if (t[0] != "LISTEN" && !raw.Contains("LISTEN", StringComparison.Ordinal)) continue;
+            var local = t[3];
+            var colon = local.LastIndexOf(':');
+            if (colon < 0 || !int.TryParse(local[(colon + 1)..], out var port)) continue;
+            var addr = local[..colon];
+            string? process = null;
+            if (SsProcess().Match(raw) is { Success: true } m) process = m.Groups[1].Value;
+            else if (t[0] != "LISTEN" && t[^1].Split('/') is [_, var name]) process = name;
+
+            if (!byPort.TryGetValue(port, out var entry)) byPort[port] = entry = ([], null);
+            if (!entry.Addrs.Contains(addr)) entry.Addrs.Add(addr);
+            if (entry.Process == null && process != null) byPort[port] = (entry.Addrs, process);
+        }
+        return byPort.Select(kv => new ListeningPort
+        {
+            Port = kv.Key,
+            Addresses = string.Join(", ", kv.Value.Addrs),
+            Process = kv.Value.Process,
+            LocalOnly = kv.Value.Addrs.All(IsLoopback),
+        }).ToList();
+    }
+
+    private static bool IsLoopback(string addr)
+    {
+        var a = addr.Trim('[', ']');
+        var pct = a.IndexOf('%');
+        if (pct >= 0) a = a[..pct];
+        return a.StartsWith("127.", StringComparison.Ordinal) || a is "::1" or "localhost";
+    }
+}
+
 /// <summary>Services an admin of VPN / web servers usually cares about.</summary>
 public static class WellKnownServices
 {

@@ -21,6 +21,7 @@ public sealed class ServerInventoryService(VaultService vault, SshClientFactory 
         if command -v docker >/dev/null 2>&1; then echo '@@sshm:docker'; docker ps -a --format '{{json .}}' 2>&1; fi
         if command -v systemctl >/dev/null 2>&1; then echo '@@sshm:services'; systemctl list-units --type=service --all --no-legend --plain --no-pager 2>/dev/null; fi
         if command -v iptables >/dev/null 2>&1; then echo '@@sshm:nat'; iptables -t nat -S 2>&1; fi
+        echo '@@sshm:ports'; ss -Htlnp 2>/dev/null || ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null
         echo '@@sshm:end'
         """;
 
@@ -118,6 +119,8 @@ public sealed class ServerInventoryService(VaultService vault, SshClientFactory 
         // "-P PREROUTING ACCEPT" is always printed when we could read the table (i.e. we were root)
         if (sections.TryGetValue("nat", out var nat) && nat.Contains("-P PREROUTING", StringComparison.Ordinal))
             f.Forwards = IptablesParser.ParseNat(nat);
+
+        if (sections.TryGetValue("ports", out var ports)) f.ListeningPorts = ListeningPortParser.Parse(ports);
 
         f.InventoryError = null;
         f.InventoryUpdated = DateTime.Now;

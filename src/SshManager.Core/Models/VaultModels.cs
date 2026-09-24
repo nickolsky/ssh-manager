@@ -25,10 +25,28 @@ public sealed class ServerEntry
     public int? MonitorIntervalMinutes { get; set; }
     /// <summary>What the app learned about the server (OS, location, containers, forwards). Not user-edited.</summary>
     public ServerFacts? Facts { get; set; }
+    /// <summary>TCP ports checked together with the server (e.g. 443 of a VPN, 2053 of a panel).</summary>
+    public List<MonitoredPort> MonitoredPorts { get; set; } = [];
 
     public string Display => $"{Username}@{Host}" + (Port != 22 ? $":{Port}" : "");
 
-    public ServerEntry Clone() => (ServerEntry)MemberwiseClone();
+    public ServerEntry Clone()
+    {
+        var c = (ServerEntry)MemberwiseClone();
+        c.MonitoredPorts = MonitoredPorts.Select(p => p.Clone()).ToList();
+        return c;
+    }
+}
+
+public sealed class MonitoredPort
+{
+    public int Port { get; set; }
+    /// <summary>What runs there (free text or the detected process).</summary>
+    public string? Name { get; set; }
+
+    public string Label => string.IsNullOrWhiteSpace(Name) ? Port.ToString() : $"{Port} {Name}";
+
+    public MonitoredPort Clone() => (MonitoredPort)MemberwiseClone();
 }
 
 public sealed class KeyEntry
