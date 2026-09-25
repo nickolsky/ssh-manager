@@ -40,6 +40,8 @@ internal static partial class Program
                 ["list"] => await List(),
                 [] or ["help"] or ["-h"] or ["--help"] or ["/?"] => Help(),
                 ["connect", var name] => await ConnectByName(name),
+                ["cron", var name] => await Cron(name),
+                ["mcp"] => await Mcp(),
                 [var name] => await ConnectByName(name),
                 _ => Help(),
             };
@@ -51,7 +53,7 @@ internal static partial class Program
         }
     }
 
-    private static bool IsCommand(string a) => a is "tab" or "list" or "connect" or "help";
+    private static bool IsCommand(string a) => a is "tab" or "list" or "connect" or "help" or "cron" or "mcp";
 
     private static int Help()
     {
@@ -92,6 +94,89 @@ internal static partial class Program
         }
         foreach (var n in r.Names ?? []) Console.WriteLine(n);
         return 0;
+    }
+
+    private static async Task<int> Cron(string name)
+    {
+        var r = await Send(new ControlRequest { Op = "cron", Name = name }, startApp: true);
+        if (!r.Ok)
+        {
+            Console.Error.WriteLine("sshm: " + r.Error);
+            return 1;
+        }
+        foreach (var n in r.Names ?? []) Console.WriteLine(n);
+        return 0;
+    }
+
+    /// <summary>
+    /// MCP over stdio for Claude Code / Codex: one JSON-RPC message per line in, one response per line out (UTF-8, no BOM).
+    /// Every message goes to the running app (started in the tray when needed), where the tools run with the vault's
+    /// credentials; nothing but the messages passes through here. Messages are handled in parallel.
+    /// </summary>
+    private static async Task<int> Mcp()
+    {
+        var session = $"stdio-{Environment.ProcessId}-{Guid.NewGuid():N}";
+        using var input = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false));
+        using var output = Console.OpenStandardOutput();
+        var writeLock = new SemaphoreSlim(1, 1);
+        var pending = new List<Task>();
+
+        async Task Handle(string message)
+        {
+            string? reply;
+            try
+            {
+                var r = await Send(new ControlRequest { Op = "mcp", Session = session, Payload = message }, startApp: true);
+                reply = r.Ok ? r.Value : McpError(message, r.Error ?? L.Get("Cli.NotResponding"));
+            }
+            catch (Exception ex)
+            {
+                reply = McpError(message, ex.Message);
+            }
+            if (reply == null) return;
+            var bytes = new UTF8Encoding(false).GetBytes(reply.Replace("\n", "").Replace("\r", "") + "\n");
+            await writeLock.WaitAsync();
+            try
+            {
+                await output.WriteAsync(bytes);
+                await output.FlushAsync();
+            }
+            finally
+            {
+                writeLock.Release();
+            }
+        }
+
+        while (await input.ReadLineAsync() is { } line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            pending.Add(Task.Run(() => Handle(line)));
+            pending.RemoveAll(t => t.IsCompleted);
+        }
+        await Task.WhenAll(pending);
+        return 0;
+    }
+
+    /// <summary>A JSON-RPC error for a request that could not reach the app (null for notifications).</summary>
+    private static string? McpError(string message, string error)
+    {
+        System.Text.Json.Nodes.JsonNode? id = null;
+        try
+        {
+            if (System.Text.Json.Nodes.JsonNode.Parse(message) is System.Text.Json.Nodes.JsonObject o)
+            {
+                if (!o.ContainsKey("id")) return null;
+                id = o["id"]?.DeepClone();
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+        }
+        return new System.Text.Json.Nodes.JsonObject
+        {
+            ["jsonrpc"] = "2.0", ["id"] = id,
+            ["error"] = new System.Text.Json.Nodes.JsonObject { ["code"] = -32000, ["message"] = "SSH Manager: " + error },
+        }.ToJsonString();
     }
 
     private static int RunSsh(LaunchSpec spec)

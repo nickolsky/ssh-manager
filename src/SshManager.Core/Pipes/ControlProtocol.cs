@@ -18,11 +18,15 @@ public sealed class LaunchSpec
 
 public sealed class ControlRequest
 {
-    /// <summary>activate | launch | connect | list | askpass</summary>
+    /// <summary>activate | launch | connect | list | askpass | cron | mcp</summary>
     public string Op { get; set; } = "";
     public string? Token { get; set; }
     public string? Name { get; set; }
     public string? Prompt { get; set; }
+    /// <summary>mcp: one JSON-RPC message from the agent (the response comes back in <see cref="ControlResponse.Value"/>).</summary>
+    public string? Payload { get; set; }
+    /// <summary>mcp: the sshm.exe process the message came through (one MCP session per process).</summary>
+    public string? Session { get; set; }
 }
 
 public sealed class ControlResponse
@@ -55,6 +59,9 @@ public static class ControlClient
 public sealed class ControlServer(Func<ControlRequest, Task<ControlResponse>> handler) : PipeServerBase
 {
     public bool Start() => Start(AppPaths.ControlPipe);
+
+    /// <summary>Tests: the pipe of another instance ("sshmanager-ctl-&lt;user&gt;-&lt;instance&gt;"), e.g. for an sshm.exe started with SSHMANAGER_INSTANCE.</summary>
+    internal bool StartForInstance(string instance) => Start("sshmanager-ctl-" + AppPaths.SafeUser + "-" + instance);
 
     protected override async Task HandleClientAsync(NamedPipeServerStream pipe, CancellationToken ct)
     {

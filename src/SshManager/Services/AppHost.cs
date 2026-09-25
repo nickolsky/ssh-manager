@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Threading;
@@ -53,6 +54,7 @@ public sealed partial class AppHost : IDisposable
         Scripts = new ScriptRunner(Ssh);
         Updates = new UpdateManager(this);
         Control = new ControlServer(HandleControlAsync);
+        Mcp = new McpService(this, _ui);
 
         Health.WentDown += (_, t) => _ui.BeginInvoke(() => OnServerDown(t));
         Health.PortWentDown += (_, t) => _ui.BeginInvoke(() => OnPortDown(t));
@@ -88,7 +90,64 @@ public sealed partial class AppHost : IDisposable
 
     /// <summary>A tray notification (clicking it opens the main window).</summary>
     public void Notify(string title, string text) => _tray?.Balloon(title, text);
+
+    // ---------- reboot ----------
+
+    private readonly ConcurrentDictionary<Guid, DateTime> _rebooting = new();
+
+    /// <summary>A reboot started or its wait ended.</summary>
+    public event EventHandler<Guid>? RebootingChanged;
+
+    public bool IsRebooting(Guid id) => _rebooting.ContainsKey(id);
+
+    /// <summary>
+    /// Reboots the server and, in the background, waits for it to come back (up to 10 minutes), then checks it and
+    /// shows a tray notice. Returns once the server accepted the reboot. <paramref name="interactive"/>: may ask to trust
+    /// an unknown host key (the menu; an agent may not).
+    /// </summary>
+    public async Task RebootAsync(Guid id, bool interactive)
+    {
+        if (!Vault.TryRead(d => d.Servers.FirstOrDefault(s => s.Id == id)?.Clone(), out var server) || server == null)
+            throw new InvalidOperationException(L.Get("Backup.ServerMissing"));
+        if (!ServerInventoryService.Supported(server) || !string.IsNullOrWhiteSpace(server.ExtraArgs))
+            throw new InvalidOperationException(L.Get("Files.NoJump"));
+        if (!_rebooting.TryAdd(id, DateTime.Now)) throw new InvalidOperationException(L.F("Reboot.AlreadyRunning", server.Name));
+        string bootId;
+        try
+        {
+            bootId = await Task.Run(() => ServerPower.Reboot(Ssh, server, interactive));
+        }
+        catch
+        {
+            _rebooting.TryRemove(id, out _);
+            throw;
+        }
+        RebootingChanged?.Invoke(this, id);
+        _ = WaitAfterRebootAsync(server, bootId);
+    }
+
+    private async Task WaitAfterRebootAsync(ServerEntry server, string bootId)
+    {
+        try
+        {
+            var back = await ServerPower.WaitBackAsync(Ssh, server, bootId, TimeSpan.FromMinutes(10));
+            _ui.Invoke(() =>
+            {
+                if (back is { } t) Notify(L.Get("Reboot.Title"), L.F("Reboot.Back", server.Name, (int)t.TotalSeconds));
+                else _tray?.Balloon(L.Get("Reboot.Title"), L.F("Reboot.NotBack", server.Name), System.Windows.Forms.ToolTipIcon.Warning);
+            });
+        }
+        finally
+        {
+            _rebooting.TryRemove(server.Id, out _);
+            RebootingChanged?.Invoke(this, server.Id);
+            Health.CheckNow(server.Id);
+            _ = Inventory.RefreshAsync(server.Id);
+        }
+    }
     public ControlServer Control { get; }
+    /// <summary>AI agents over MCP (stdio through sshm.exe, HTTP on 127.0.0.1).</summary>
+    public McpService Mcp { get; }
 
     public event EventHandler? StateChanged;
 
@@ -96,6 +155,7 @@ public sealed partial class AppHost : IDisposable
     {
         Agent.Start();
         Control.Start();
+        Mcp.ApplySettings();
         _tray = new TrayIcon(this);
         Updates.Start();
         _hotkey = new GlobalHotkey(ToggleMainWindow);
@@ -319,6 +379,15 @@ public sealed partial class AppHost : IDisposable
         _main?.OpenFiles(server, dir);
     }
 
+    /// <summary>A remote file in the built-in editor tab. Not for servers behind a jump host.</summary>
+    public void OpenEditor(ServerEntry server, string path)
+    {
+        if (!string.IsNullOrWhiteSpace(server.JumpHost) || !string.IsNullOrWhiteSpace(server.ExtraArgs))
+            throw new InvalidOperationException(L.Get("Files.NoJump"));
+        ShowMainWindow();
+        _main?.OpenEditor(server, path);
+    }
+
     public bool UseBuiltInTerminal(ServerEntry server) =>
         SettingsStore.Settings.Terminal == TerminalMode.BuiltIn &&
         string.IsNullOrWhiteSpace(server.JumpHost) && string.IsNullOrWhiteSpace(server.ExtraArgs);
@@ -374,6 +443,7 @@ public sealed partial class AppHost : IDisposable
 
     private void OnServerDown(HealthTransition t)
     {
+        if (IsRebooting(t.ServerId)) return; // expected; the reboot reports its own result
         if (!SettingsStore.Settings.NotifyOnServerDown || !Vault.TryRead(d => d.Servers.FirstOrDefault(s => s.Id == t.ServerId)?.Name, out var name) || name == null)
             return;
         _tray?.Balloon(L.Get("Health.DownTitle"), L.F("Health.DownText", name, t.After.Error), System.Windows.Forms.ToolTipIcon.Warning);
@@ -381,6 +451,7 @@ public sealed partial class AppHost : IDisposable
 
     private void OnPortDown(PortTransition t)
     {
+        if (IsRebooting(t.ServerId)) return;
         if (!SettingsStore.Settings.NotifyOnServerDown || !Vault.TryRead(d => d.Servers.FirstOrDefault(s => s.Id == t.ServerId)?.Name, out var name) || name == null)
             return;
         _tray?.Balloon(L.Get("Health.PortDownTitle"), L.F("Health.PortDownText", name, t.Port.Label, t.After.Error), System.Windows.Forms.ToolTipIcon.Warning);
@@ -487,6 +558,26 @@ public sealed partial class AppHost : IDisposable
                 });
             }
 
+            case "mcp":
+            {
+                if (string.IsNullOrEmpty(req.Payload)) return ControlResponse.Fail("no payload");
+                // the MCP server unlocks the vault itself (only when a tool is called) and answers errors in JSON-RPC
+                var answer = await Mcp.HandleAsync(req.Session ?? "stdio", req.Payload);
+                return new ControlResponse { Ok = true, Value = answer };
+            }
+
+            case "cron":
+            {
+                if (!await EnsureUnlockedAsync()) return ControlResponse.Fail(L.Get("Vault.Locked"));
+                var error = "";
+                var server = Vault.Read(_ => FindServer(req.Name ?? "", out error)?.Clone());
+                if (server == null) return ControlResponse.Fail(error);
+                if (!ServerInventoryService.Supported(server)) return ControlResponse.Fail(L.Get("Files.NoJump"));
+                var jobs = await Task.Run(() => CronCollector.Collect(Ssh, server));
+                Vault.UpdateFacts(server.Id, f => f.CronJobs = jobs);
+                return new ControlResponse { Ok = true, Names = CronCollector.Format(jobs) };
+            }
+
             default:
                 return ControlResponse.Fail(L.F("Ipc.UnknownOp", req.Op));
         }
@@ -545,6 +636,7 @@ public sealed partial class AppHost : IDisposable
         Health.Dispose();
         Agent.Dispose();
         Control.Dispose();
+        Mcp.Dispose();
         _tray?.Dispose();
         _tray = null;
         _hotkey?.Dispose();

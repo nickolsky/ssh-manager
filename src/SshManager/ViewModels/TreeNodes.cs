@@ -381,6 +381,13 @@ public sealed class ServerNode : TreeNode
             foreach (var s in f.Services) services.Children.Add(new ServiceNode(level + 1, s, services));
         }
 
+        if (f.CronJobs.Count > 0)
+        {
+            var cron = Section("cron", L.F("Tree.Cron", f.CronJobs.Count), "");
+            foreach (var j in f.CronJobs.OrderBy(j => j.Kind).ThenBy(j => j.User, StringComparer.Ordinal))
+                cron.Children.Add(new CronNode(level + 1, j, cron));
+        }
+
         var incoming = _vm.IncomingForwards(Entry).ToList();
         if (f.Forwards.Count > 0 || incoming.Count > 0)
         {
@@ -417,7 +424,7 @@ public sealed class ServerNode : TreeNode
     private SectionNode Section(string key, string title, string icon)
     {
         var s = new SectionNode(Level + 1, key, title, icon, this);
-        s.IsExpanded = _sectionState.TryGetValue(key, out var e) ? e : key != "services";
+        s.IsExpanded = _sectionState.TryGetValue(key, out var e) ? e : key is not ("services" or "cron");
         Children.Add(s);
         return s;
     }
@@ -504,6 +511,44 @@ public sealed class ServiceNode : TreeNode
     public override string Os => $"{Info.Active} ({Info.Sub})" + (Info.Autostart ? "  ⟳" : "");
     public override string? Tip => $"{Info.Title}\n{Info.Unit}.service\n{Info.Active} ({Info.Sub})" +
                                    (Info.Enabled != null ? "\n" + L.F("Service.EnabledTip", Info.Enabled) : "");
+}
+
+/// <summary>A scheduled job: its command, schedule and where it is defined.</summary>
+public sealed class CronNode : TreeNode
+{
+    public CronNode(int level, CronJob job, TreeNode parent) : base(level)
+    {
+        Job = job;
+        Parent = parent;
+    }
+
+    public CronJob Job { get; }
+
+    public override string Title => Job.Kind == CronKind.Timer ? Job.Source : Shorten(Job.Command, 90);
+    public override string Icon => Job.Kind == CronKind.Timer ? "" : ""; // stopwatch / clock
+    public override string Dot => Job.Active ? "ok" : "off";
+    public override bool IsMuted => !Job.Active;
+    public override string Address => Job.Kind == CronKind.Timer ? Job.Command : Job.Schedule;
+    public override string Os => Job.Kind switch
+    {
+        CronKind.Timer => Job.Schedule,
+        CronKind.Crontab => L.F("Cron.UserCrontab", Job.User),
+        _ => $"{Job.User} · {Job.Source}",
+    };
+
+    public override string? Tip
+    {
+        get
+        {
+            var tip = Job.Kind == CronKind.Timer ? $"{Job.Source} → {Job.Command}\n{Job.Schedule}" : Job.Line + "\n" + Job.Source;
+            if (Job.Description != null) tip += "\n" + Job.Description;
+            if (Job.Next != null) tip += "\n" + L.F("Cron.Next", Job.Next);
+            if (Job.Last != null) tip += "\n" + L.F("Cron.Last", Job.Last);
+            return tip;
+        }
+    }
+
+    private static string Shorten(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "…";
 }
 
 public sealed class ForwardNode : TreeNode

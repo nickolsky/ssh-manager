@@ -72,6 +72,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         TestCommand = new RelayCommand(Test, HasServer);
         RefreshInfoCommand = new RelayCommand(() => _host.RefreshServer(SelectedServer!.Entry.Id), HasServer);
         CheckNowCommand = new RelayCommand(() => _host.Health.CheckNow(SelectedServer!.Entry.Id), HasServer);
+        RebootCommand = new RelayCommand(Reboot, () => HasServer() && !_host.IsRebooting(SelectedServer!.Entry.Id));
+        SetMcpAccessCommand = new RelayCommand(p => SetMcpAccess(p is McpAccess a ? a : McpAccess.Off), _ => SelectedServer != null);
+        AgentLogCommand = new RelayCommand(OpenAgentLog);
         SetMonitorIntervalCommand = new RelayCommand(p => SetMonitorInterval(p is int m ? m : null), _ => HasServer());
         PortForwardsCommand = new RelayCommand(OpenPortForwards, HasServer);
         PortMonitorCommand = new RelayCommand(OpenPortMonitor, HasServer);
@@ -92,6 +95,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ContainerAutostartCommand = new RelayCommand(p => SetAutostart(p as string), _ => SelectedNode is ContainerNode && !Busy);
         ServiceStatusCommand = new RelayCommand(() => QuickAction(n => n is ServiceNode s ? ScriptRunner.ServiceStatus(n.Server!.Entry, s.Info.Unit) : null, "systemctl status"), () => SelectedNode is ServiceNode);
         ServiceLogsCommand = new RelayCommand(() => QuickAction(n => n is ServiceNode s ? ScriptRunner.ServiceLogs(n.Server!.Entry, s.Info.Unit) : null, "journalctl"), () => SelectedNode is ServiceNode);
+        CronCopyCommand = new RelayCommand(CopyCronLine, () => SelectedNode is CronNode);
+        CronOpenFileCommand = new RelayCommand(OpenCronFile, () => SelectedNode is CronNode { Job.Kind: CronKind.File or CronKind.Periodic });
+        CronEditCommand = new RelayCommand(() => QuickAction(n => n is CronNode { Job.Kind: CronKind.Crontab } c ? CrontabEdit(n.Server!.Entry, c.Job.User) : null, "crontab -e"),
+            () => SelectedNode is CronNode { Job.Kind: CronKind.Crontab });
+        CronTimerStatusCommand = new RelayCommand(() => QuickAction(n => n is CronNode { Job.Kind: CronKind.Timer } c ? ScriptRunner.ServiceStatus(n.Server!.Entry, c.Job.Source) : null, "systemctl status"),
+            () => SelectedNode is CronNode { Job.Kind: CronKind.Timer });
+        CronTimerLogsCommand = new RelayCommand(() => QuickAction(n => n is CronNode { Job.Kind: CronKind.Timer } c ? ScriptRunner.ServiceLogs(n.Server!.Entry, c.Job.Command) : null, "journalctl"),
+            () => SelectedNode is CronNode { Job.Kind: CronKind.Timer });
         ServiceRestartCommand = new RelayCommand(RestartService, () => SelectedNode is ServiceNode && !Busy);
         ServiceStartCommand = new RelayCommand(() => ServiceAction(ServiceCommands.Start, "Service.Starting", "Service.Started"),
             () => SelectedNode is ServiceNode { Info.IsRunning: false } && !Busy);
@@ -143,6 +154,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ObservableCollection<KeyRow> Keys { get; } = [];
     public ObservableCollection<MenuEntry> InstallItems { get; } = [];
     public ObservableCollection<MenuEntry> MonitorItems { get; } = [];
+    public ObservableCollection<MenuEntry> McpItems { get; } = [];
 
     public TreeNode? SelectedNode
     {
@@ -153,6 +165,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(SelectedServer));
             OnPropertyChanged(nameof(SelectionKind));
             OnPropertyChanged(nameof(SelectedAttributeHasQr));
+            OnPropertyChanged(nameof(SelectedCronKind));
             OnPropertyChanged(nameof(IsRestartNo));
             OnPropertyChanged(nameof(IsRestartUnlessStopped));
             OnPropertyChanged(nameof(IsRestartAlways));
@@ -174,6 +187,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ServerNode => "server",
         ContainerNode => "container",
         ServiceNode => "service",
+        CronNode => "cron",
         ForwardNode => "forward",
         PortNode { Monitored: not null } => "port-on",
         AttributeNode => "attribute",
@@ -255,6 +269,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ICommand RefreshInfoCommand { get; }
     public ICommand CheckNowCommand { get; }
     public ICommand SetMonitorIntervalCommand { get; }
+    public ICommand RebootCommand { get; }
+    public ICommand SetMcpAccessCommand { get; }
+    public ICommand AgentLogCommand { get; }
     public ICommand PortForwardsCommand { get; }
     public ICommand PortMonitorCommand { get; }
     public ICommand TogglePortCommand { get; }
@@ -279,6 +296,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool IsRestartOnFailure => SelectedRestartPolicy == "on-failure";
     public ICommand ServiceStatusCommand { get; }
     public ICommand ServiceLogsCommand { get; }
+    public ICommand CronCopyCommand { get; }
+    public ICommand CronOpenFileCommand { get; }
+    public ICommand CronEditCommand { get; }
+    public ICommand CronTimerStatusCommand { get; }
+    public ICommand CronTimerLogsCommand { get; }
+
+    /// <summary>Crontab / File / Periodic / Timer for a selected scheduled job, else "" (which cron menu items show).</summary>
+    public string SelectedCronKind => _selectedNode is CronNode c ? c.Job.Kind.ToString() : "";
     public ICommand ServiceRestartCommand { get; }
     public ICommand ServiceStartCommand { get; }
     public ICommand ServiceStopCommand { get; }
@@ -574,6 +599,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public void PrepareContextMenu()
     {
         PrepareMonitorMenu();
+        PrepareMcpMenu();
         InstallItems.Clear();
         var server = SelectedServer?.Entry;
         var scripts = _host.Vault.IsUnlocked ? _host.Vault.Data.Scripts.OrderBy(s => s.Name, StringComparer.CurrentCultureIgnoreCase).ToList() : [];
@@ -602,6 +628,41 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     ];
 
     /// <summary>Fills "Monitoring ▸" for the selected server, the current choice checked.</summary>
+    /// <summary>Fills "AI agent access ▸": the levels, the current one checked (full access keeps its folders from the editor).</summary>
+    private void PrepareMcpMenu()
+    {
+        McpItems.Clear();
+        if (SelectedServer?.Entry is not { } server) return;
+        foreach (var a in Enum.GetValues<McpAccess>())
+            McpItems.Add(new MenuEntry(ServerEditorWindow.McpLevelText(a), SetMcpAccessCommand, a, Checked: server.McpAccess == a));
+        McpItems.Add(new MenuEntry(L.Get("Ctx.AgentLog"), AgentLogCommand));
+    }
+
+    private void SetMcpAccess(McpAccess access)
+    {
+        if (SelectedServer?.Entry is not { } server) return;
+        var id = server.Id;
+        _host.Vault.Update(d =>
+        {
+            if (d.Servers.FirstOrDefault(s => s.Id == id) is { } s) s.McpAccess = access;
+        });
+        Status = L.F("Mcp.AccessChanged", server.Name, ServerEditorWindow.McpLevelText(access)) +
+                 (access == McpAccess.Full && server.McpFolders.Count == 0 ? " " + L.Get("Mcp.AccessNoFolders") : "") +
+                 (access != McpAccess.Off && !_host.SettingsStore.Settings.Mcp.Enabled ? " " + L.Get("Mcp.AccessGlobalOff") : "");
+    }
+
+    private void OpenAgentLog()
+    {
+        var existing = Application.Current.Windows.OfType<AgentLogWindow>().FirstOrDefault();
+        if (existing != null)
+        {
+            existing.Select(SelectedServer?.Entry.Id);
+            existing.Activate();
+            return;
+        }
+        new AgentLogWindow(_host, SelectedServer?.Entry.Id) { Owner = Owner }.Show();
+    }
+
     private void PrepareMonitorMenu()
     {
         MonitorItems.Clear();
@@ -739,6 +800,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         copy.Facts = null;
         copy.Attributes = []; // results belong to the original machine
         copy.ScriptRuns = [];
+        copy.McpAccess = McpAccess.Off; // an agent gets a new server only when it is given access on purpose
+        copy.McpFolders = [];
         if (new ServerEditorWindow(_host, copy, isNew: true) { Owner = Owner }.ShowDialog() != true) return;
         _host.Vault.Update(d => d.Servers.Add(copy));
         Select(copy.Id);
@@ -956,6 +1019,52 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (SelectedNode is ContainerNode { Info.ComposeProject: { } project } && !Confirm(L.F("Container.ComposePolicyNote", project))) return;
         ContainerAction(i => ContainerCommands.SetRestart(i, policy), "Container.Updating", "Container.Updated");
     }
+
+    private async void Reboot()
+    {
+        if (SelectedServer?.Entry is not { } server) return;
+        if (!Confirm(L.F("Reboot.Confirm", server.Name, server.Display))) return;
+        Busy = true;
+        Status = L.F("Reboot.Sending", server.Name);
+        try
+        {
+            await _host.RebootAsync(server.Id, interactive: true);
+            Status = L.F("Reboot.Started", server.Name);
+        }
+        catch (Exception ex)
+        {
+            Status = "";
+            Warn(L.Get("Reboot.Title"), L.F("Reboot.FailedOn", server.Name, ex.Message));
+        }
+        finally
+        {
+            Busy = false;
+        }
+    }
+
+    private void CopyCronLine()
+    {
+        if (SelectedNode is not CronNode c) return;
+        Clipboard.SetText(c.Job.Line);
+        Status = L.Get("Cron.Copied");
+    }
+
+    private void OpenCronFile()
+    {
+        if (SelectedNode is not CronNode { Server: { } server } c) return;
+        try
+        {
+            _host.OpenEditor(server.Entry, c.Job.Kind == CronKind.Periodic ? c.Job.Command : c.Job.Source);
+        }
+        catch (Exception ex)
+        {
+            Warn(L.Get("Files.Title"), ex.Message);
+        }
+    }
+
+    /// <summary>crontab -e for that user: the login user's own without sudo, anyone else's as root.</summary>
+    private static string CrontabEdit(ServerEntry server, string user) =>
+        user == server.Username ? "crontab -e" : ScriptRunner.Elevated(server, "crontab -e -u " + RemoteShell.Quote(user));
 
     private void QuickAction(Func<TreeNode, string?> build, string title)
     {

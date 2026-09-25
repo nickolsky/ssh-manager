@@ -158,6 +158,109 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
 
     public void RefreshHotkeyStatus() => OnPropertyChanged(nameof(HotkeyStatus));
 
+    // ---------- AI agents (MCP) ----------
+
+    private McpSettings M => S.Mcp;
+
+    public bool McpEnabled
+    {
+        get => M.Enabled;
+        set
+        {
+            M.Enabled = value;
+            Save();
+            _host.Mcp.ApplySettings();
+            OnMcpChanged();
+        }
+    }
+
+    public bool McpHttpEnabled
+    {
+        get => M.HttpEnabled;
+        set
+        {
+            M.HttpEnabled = value;
+            Save();
+            _host.Mcp.ApplySettings();
+            OnMcpChanged();
+        }
+    }
+
+    public int McpHttpPort
+    {
+        get => _host.Mcp.HttpPort;
+        set
+        {
+            M.HttpPort = value is > 1023 and < 65536 ? value : McpSettings.DefaultPort;
+            Save();
+            _host.Mcp.ApplySettings();
+            OnMcpChanged();
+        }
+    }
+
+    public bool McpConfirm
+    {
+        get => M.ConfirmDangerous;
+        set
+        {
+            M.ConfirmDangerous = value;
+            Save();
+        }
+    }
+
+    public int McpLogMaxMb
+    {
+        get => M.LogMaxMb;
+        set
+        {
+            M.LogMaxMb = Math.Clamp(value, 1, 1024);
+            Save();
+            _host.Mcp.Log.PruneAll();
+        }
+    }
+
+    public int McpLogDays
+    {
+        get => M.LogRetentionDays;
+        set
+        {
+            M.LogRetentionDays = Math.Clamp(value, 1, 3650);
+            Save();
+            _host.Mcp.Log.PruneAll();
+        }
+    }
+
+    public string McpClaudeCommand => McpService.ClaudeCommand;
+    public string McpCodexConfig => McpService.CodexConfig;
+    public string McpHttpCommand => M.HttpEnabled ? _host.Mcp.ClaudeHttpCommand() : "";
+    public string McpHttpStatus =>
+        !M.Enabled || !M.HttpEnabled ? "" : _host.Mcp.HttpError ?? (_host.Mcp.HttpUrl is { } url ? L.F("Mcp.HttpRunning", url) : "");
+    public int McpServerCount => _host.Vault.TryRead(d => d.Servers.Count(s => s.McpAccess != McpAccess.Off), out var n) ? n : 0;
+    public string McpServersText => L.F("Mcp.ServersEnabled", McpServerCount);
+
+    public ICommand CopyMcpClaudeCommand => new RelayCommand(() => CopyText(McpClaudeCommand));
+    public ICommand CopyMcpCodexCommand => new RelayCommand(() => CopyText(McpCodexConfig));
+    public ICommand CopyMcpHttpCommand => new RelayCommand(() => CopyText(McpHttpCommand), () => McpHttpEnabled);
+    public ICommand RegenerateMcpTokenCommand => new RelayCommand(() =>
+    {
+        _host.Mcp.RegenerateToken();
+        OnMcpChanged();
+    }, () => McpHttpEnabled);
+    public ICommand OpenAgentLogCommand => _main.AgentLogCommand;
+
+    private void CopyText(string text)
+    {
+        if (text.Length == 0) return;
+        Clipboard.SetText(text);
+        _main.Status = L.Get("ScriptRun.Copied");
+    }
+
+    private void OnMcpChanged()
+    {
+        foreach (var p in new[] { nameof(McpHttpCommand), nameof(McpHttpStatus), nameof(McpServersText), nameof(McpHttpPort) }) OnPropertyChanged(p);
+        CommandManager.InvalidateRequerySuggested();
+    }
+
     // ---------- updates ----------
 
     public string VersionText => L.F("Update.Version", _host.Updates.Current.ToString(3)) + (AppPaths.IsSideBySide ? " [" + AppPaths.Instance + "]" : "");

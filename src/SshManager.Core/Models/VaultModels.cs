@@ -6,6 +6,21 @@ public enum AuthMode
     Key,
 }
 
+/// <summary>What an AI agent connected over MCP may do with a server. Each level includes the ones before it.</summary>
+public enum McpAccess
+{
+    /// <summary>The agent does not see the server.</summary>
+    Off,
+    /// <summary>Status, metrics, containers, services, cron, ports, logs.</summary>
+    ReadOnly,
+    /// <summary>+ reboot.</summary>
+    Reboot,
+    /// <summary>+ the actions of the app's menus: containers, services, install scripts. No shell, no files.</summary>
+    LimitedWrite,
+    /// <summary>+ any command, the server's files, copying to / from the allowed local folders.</summary>
+    Full,
+}
+
 public sealed class ServerEntry
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -31,12 +46,17 @@ public sealed class ServerEntry
     public List<ServerAttribute> Attributes { get; set; } = [];
     /// <summary>Recent script runs, newest last.</summary>
     public List<ScriptRun> ScriptRuns { get; set; } = [];
+    /// <summary>What an AI agent (MCP) may do with this server.</summary>
+    public McpAccess McpAccess { get; set; } = McpAccess.Off;
+    /// <summary>Local folders the agent may copy files from and to (<see cref="McpAccess.Full"/> only).</summary>
+    public List<string> McpFolders { get; set; } = [];
 
     public string Display => $"{Username}@{Host}" + (Port != 22 ? $":{Port}" : "");
 
     public ServerEntry Clone()
     {
         var c = (ServerEntry)MemberwiseClone();
+        c.McpFolders = [.. McpFolders];
         c.MonitoredPorts = MonitoredPorts.Select(p => p.Clone()).ToList();
         c.Attributes = Attributes.Select(a => a.Clone()).ToList();
         c.ScriptRuns = ScriptRuns.Select(r => r.Clone()).ToList();

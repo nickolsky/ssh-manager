@@ -55,7 +55,8 @@ public static class TextFiles
 /// may not (the stored password is fed to sudo on stdin). Writing goes into the existing file, so its owner and
 /// permissions stay as they were.
 /// </summary>
-public sealed class RemoteTextFile(SshClientFactory ssh, ServerEntry server, string path) : IDisposable
+/// <param name="interactive">May ask to trust an unknown host key (the editor); an AI agent may not.</param>
+public sealed class RemoteTextFile(SshClientFactory ssh, ServerEntry server, string path, bool interactive = true) : IDisposable
 {
     private SftpClient? _sftp;
     private DateTime? _modified;
@@ -72,7 +73,7 @@ public sealed class RemoteTextFile(SshClientFactory ssh, ServerEntry server, str
     {
         if (_sftp is { IsConnected: true }) return _sftp;
         _sftp?.Dispose();
-        _sftp = ssh.ConnectSftp(server);
+        _sftp = ssh.ConnectSftp(server, interactive);
         _sftp.OperationTimeout = TimeSpan.FromSeconds(60);
         return _sftp;
     }
@@ -166,7 +167,7 @@ public sealed class RemoteTextFile(SshClientFactory ssh, ServerEntry server, str
     private byte[] SudoRead()
     {
         if (!CanSudo) throw new UnauthorizedAccessException(L.Get("TextEd.Denied"));
-        using var client = ssh.Connect(server);
+        using var client = ssh.Connect(server, interactive);
         var r = RemoteShell.Run(client, server, $"test -f {RemoteShell.Quote(Path)} || exit 3\nbase64 < {RemoteShell.Quote(Path)}", elevated: true,
             TimeSpan.FromSeconds(60));
         if (RemoteShell.SudoFailed(r)) throw new UnauthorizedAccessException(L.F("TextEd.SudoFailed", r.Error.Trim()));
@@ -196,7 +197,7 @@ public sealed class RemoteTextFile(SshClientFactory ssh, ServerEntry server, str
                 sftp.ChangePermissions(tmp, 600);
                 s.Write(bytes);
             }
-            using var client = ssh.Connect(server);
+            using var client = ssh.Connect(server, interactive);
             var q = RemoteShell.Quote(Path);
             var r = RemoteShell.Run(client, server, $"cat {RemoteShell.Quote(tmp)} > {q}", elevated: true, TimeSpan.FromSeconds(60));
             if (RemoteShell.SudoFailed(r)) throw new UnauthorizedAccessException(L.F("TextEd.SudoFailed", r.Error.Trim()));

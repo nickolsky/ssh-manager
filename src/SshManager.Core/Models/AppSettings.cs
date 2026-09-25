@@ -79,4 +79,24 @@ public sealed class AppSettings
     /// <summary>Group paths collapsed in the server tree.</summary>
     public List<string> CollapsedGroups { get; set; } = [];
     public BackupSettings Backup { get; set; } = new();
+    public McpSettings Mcp { get; set; } = new();
+}
+
+/// <summary>AI agents (Claude Code, Codex…) managing servers over MCP. What each server allows is set on the server.</summary>
+public sealed class McpSettings
+{
+    public const int DefaultPort = 47821;
+
+    /// <summary>Master switch: off = every tool call is refused.</summary>
+    public bool Enabled { get; set; }
+    /// <summary>Streamable HTTP on 127.0.0.1 (besides stdio through sshm.exe mcp).</summary>
+    public bool HttpEnabled { get; set; }
+    public int HttpPort { get; set; } = DefaultPort;
+    /// <summary>Bearer token for HTTP; made on first use.</summary>
+    public string? HttpToken { get; set; }
+    /// <summary>Ask in the app before a reboot or a deletion.</summary>
+    public bool ConfirmDangerous { get; set; } = true;
+    /// <summary>Agent log per server: size limit (MB, all files together) and how long files are kept (days).</summary>
+    public int LogMaxMb { get; set; } = 10;
+    public int LogRetentionDays { get; set; } = 30;
 }

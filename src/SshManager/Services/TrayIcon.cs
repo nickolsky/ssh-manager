@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using SshManager.Core;
 using SshManager.Core.Models;
@@ -16,17 +17,42 @@ internal sealed class TrayIcon : IDisposable
     public TrayIcon(AppHost host)
     {
         _host = host;
-        _icon = new NotifyIcon { Text = AppPaths.ProductTitle, ContextMenuStrip = _menu, Visible = true };
+        // the menu is shown by hand (not ContextMenuStrip =): built first, then placed at the mouse, so its size and screen are right
+        _icon = new NotifyIcon { Text = AppPaths.ProductTitle, Visible = true };
         _icon.DoubleClick += (_, _) => _host.ShowMainWindow();
         _icon.BalloonTipClicked += (_, _) => _host.ShowMainWindow();
         _icon.MouseClick += (_, e) =>
         {
             if (e.Button == MouseButtons.Left && !_host.Vault.IsUnlocked) _host.ShowMainWindow();
         };
-        _menu.Opening += (_, _) => BuildMenu();
+        _icon.MouseUp += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Right) ShowMenu(Cursor.Position);
+        };
         BuildMenu();
         UpdateState();
     }
+
+    /// <summary>
+    /// Opens the menu at a screen point (the mouse): above and to the left of it, like the shell's own tray menus,
+    /// kept inside the working area of the monitor the point is on.
+    /// </summary>
+    internal void ShowMenu(Point at)
+    {
+        BuildMenu();
+        // the menu must own the foreground, or it does not close when clicking elsewhere
+        SetForegroundWindow(new HandleRef(_menu, _menu.Handle));
+        var size = _menu.GetPreferredSize(Size.Empty);
+        var area = Screen.FromPoint(at).WorkingArea;
+        var x = Math.Clamp(at.X - size.Width, area.Left, Math.Max(area.Left, area.Right - size.Width));
+        var y = Math.Clamp(at.Y - size.Height, area.Top, Math.Max(area.Top, area.Bottom - size.Height));
+        _menu.Show(new Point(x, y));
+    }
+
+    internal ContextMenuStrip Menu => _menu;
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(HandleRef hWnd);
 
     public void UpdateState()
     {

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using SshManager.Core.Inventory;
 using SshManager.Core.Models;
 using SshManager.Core.Scripts;
 using SshManager.Core.Ssh;
@@ -17,7 +18,7 @@ namespace SshManager.Tests;
 /// </summary>
 public partial class LabTests(ITestOutputHelper log)
 {
-    private sealed record Lab(ServerEntry Server, SshClientFactory Ssh, ScriptRunner Runner);
+    private sealed record Lab(ServerEntry Server, SshClientFactory Ssh, ScriptRunner Runner, VaultService Vault);
 
     private static readonly string LogDir = Path.Combine(Path.GetTempPath(), "sshm-lab");
 
@@ -57,7 +58,7 @@ public partial class LabTests(ITestOutputHelper log)
         {
             try
             {
-                await check(new Lab(s, ssh, runner));
+                await check(new Lab(s, ssh, runner, vault));
             }
             catch (Exception ex)
             {
@@ -284,6 +285,62 @@ public partial class LabTests(ITestOutputHelper log)
             {
                 Sh(lab, "docker rm -f sshm-awgc; rm -f /tmp/sshm-awg.conf", check: false);
             }
+        });
+    }
+
+    // ---------- scheduled jobs ----------
+
+    [Fact]
+    public async Task Cron_Jobs_Of_All_Users_Files_And_Timers_Are_Collected()
+    {
+        if (!Enabled("cron")) return;
+        await OnEachServer(lab =>
+        {
+            // noninteractive: without it cron's recommended mail server asks questions on the console and hangs
+            Sh(lab, "export DEBIAN_FRONTEND=noninteractive; command -v crontab >/dev/null || (apt-get -o DPkg::Lock::Timeout=300 update -qq && " +
+                    "apt-get install -y -qq --no-install-recommends cron) >/dev/null 2>&1; " +
+                    "systemctl start cron 2>/dev/null; " +
+                    "(crontab -l 2>/dev/null | grep -v sshm-lab; echo '*/7 * * * * /bin/echo sshm-lab-root  # sshm-lab') | crontab - && " +
+                    "id lab >/dev/null 2>&1 && echo '@daily /bin/true sshm-lab-user' | crontab -u lab - ; " +
+                    "printf 'SHELL=/bin/sh\\n15 4 * * 1 nobody /bin/echo sshm-lab-file\\n' > /etc/cron.d/sshm-lab");
+            try
+            {
+                var jobs = CronCollector.Collect(lab.Ssh, lab.Server);
+                var root = Assert.Single(jobs, j => j.Command.Contains("sshm-lab-root"));
+                Assert.Equal((CronKind.Crontab, "root", "*/7 * * * *"), (root.Kind, root.User, root.Schedule));
+                if (Sh(lab, "id lab >/dev/null 2>&1 && echo yes", check: false).Contains("yes"))
+                    Assert.Equal("lab", Assert.Single(jobs, j => j.Command.Contains("sshm-lab-user")).User);
+                var file = Assert.Single(jobs, j => j.Source == "/etc/cron.d/sshm-lab");
+                Assert.Equal(("nobody", "15 4 * * 1"), (file.User, file.Schedule));
+                Assert.Contains(jobs, j => j.Kind == CronKind.Timer && j.Command.EndsWith(".service"));
+                log.WriteLine($"{lab.Server.Name}: {jobs.Count} jobs\n" + string.Join("\n", CronCollector.Format(jobs)));
+            }
+            finally
+            {
+                Sh(lab, "crontab -l 2>/dev/null | grep -v sshm-lab | crontab - ; crontab -r -u lab 2>/dev/null; rm -f /etc/cron.d/sshm-lab", check: false);
+            }
+            return Task.CompletedTask;
+        });
+    }
+
+    // ---------- reboot ----------
+
+    /// <summary>Restarts the lab servers (heavy: other checks on them are interrupted). The lab restarts stopped containers.</summary>
+    [Fact]
+    public async Task Reboot_Goes_Through_And_The_Server_Comes_Back()
+    {
+        if (!Enabled("reboot", heavy: true)) return;
+        await OnEachServer(async lab =>
+        {
+            var uptimeBefore = double.Parse(Sh(lab, "cut -d' ' -f1 /proc/uptime").Trim(), System.Globalization.CultureInfo.InvariantCulture);
+            var bootId = ServerPower.Reboot(lab.Ssh, lab.Server, interactive: false);
+            Assert.Matches("^[0-9a-f-]{36} [0-9]+$", bootId); // boot id + start time of PID 1
+            var back = await ServerPower.WaitBackAsync(lab.Ssh, lab.Server, bootId, TimeSpan.FromMinutes(4), pollEvery: TimeSpan.FromSeconds(3));
+            Assert.True(back != null, "the server did not come back");
+            log.WriteLine($"{lab.Server.Name}: back after {back!.Value.TotalSeconds:0} s");
+            var uptimeAfter = double.Parse(Sh(lab, "cut -d' ' -f1 /proc/uptime").Trim(), System.Globalization.CultureInfo.InvariantCulture);
+            // a container's /proc/uptime is the host's: only a real VM shows the restart there
+            log.WriteLine($"uptime before {uptimeBefore:0} s, after {uptimeAfter:0} s; systemd: " + Sh(lab, "systemctl is-system-running", check: false).Trim());
         });
     }
 

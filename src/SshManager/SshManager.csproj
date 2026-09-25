@@ -8,6 +8,9 @@
     <AssemblyTitle>SSH Manager</AssemblyTitle>
     <!-- regenerate with IconFactory.WriteIco after changing the drawing -->
     <ApplicationIcon>Assets/app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- WFO0003 is for WinForms apps (Application.SetHighDpiMode); this is WPF: DPI awareness comes from the manifest -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
     <!-- Fluent ThemeMode is still flagged experimental -->
     <NoWarn>$(NoWarn);WPF0001</NoWarn>
   </PropertyGroup>

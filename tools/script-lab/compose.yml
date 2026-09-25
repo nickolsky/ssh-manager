@@ -11,7 +11,8 @@ x-lab: &lab
     - /tmp:exec
   volumes:
     - /sys/fs/cgroup:/sys/fs/cgroup:rw
-  restart: "no"
+  # "reboot" inside stops the container's systemd; Docker starts it again, like a VPS coming back
+  restart: unless-stopped
 
 services:
   ubuntu:

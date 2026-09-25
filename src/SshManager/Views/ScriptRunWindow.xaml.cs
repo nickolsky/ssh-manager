@@ -61,7 +61,6 @@ public sealed record ResultRow(string Label, string Value)
 public partial class ScriptRunWindow : Window
 {
     private const int MaxOutputChars = 2_000_000;
-    private const int KeepRuns = 30;
 
     private readonly AppHost _host;
     private readonly Guid _serverId;
@@ -192,17 +191,8 @@ public partial class ScriptRunWindow : Window
 
         run.Finished = DateTime.Now;
         run.OutputTail = Tail(Output.Text, 60);
-        if (result != null)
-        {
-            run.Results = result.Results;
-            if (result.Ok)
-            {
-                // value="…${PARAM}…" results (compose scripts) are filled in by the app
-                var vars = new Dictionary<string, string>(values) { ["SSHM_HOST"] = server.Host, ["SSHM_SERVER_NAME"] = server.Name };
-                foreach (var (key, value) in _manifest.TemplateResults(vars)) run.Results.TryAdd(key, value);
-            }
-        }
-        Save(run);
+        if (result != null) run.Results = result.Results;
+        Save(server, run, values);
         ShowResults(run.Results);
         if (result?.Ok == true) _host.RefreshServer(_serverId); // containers, services, ports may have changed
     }
@@ -276,36 +266,12 @@ public partial class ScriptRunWindow : Window
     // ---------- results ----------
 
     /// <summary>Stores the run and its results on the server (attributes, monitored ports).</summary>
-    private void Save(ScriptRun run)
+    private void Save(ServerEntry server, ScriptRun run, IReadOnlyDictionary<string, string> values)
     {
-        var addedPorts = false;
+        bool addedPorts;
         try
         {
-            _host.Vault.Update(d =>
-            {
-                var s = d.Servers.FirstOrDefault(x => x.Id == _serverId);
-                if (s == null) return;
-                s.ScriptRuns.Add(run);
-                if (s.ScriptRuns.Count > KeepRuns) s.ScriptRuns.RemoveRange(0, s.ScriptRuns.Count - KeepRuns);
-                foreach (var (key, value) in run.Results)
-                {
-                    var def = _manifest.Result(key);
-                    var attr = s.Attributes.FirstOrDefault(a => a.Key == key);
-                    if (attr == null) s.Attributes.Add(attr = new ServerAttribute { Key = key });
-                    attr.Label = def?.Label ?? key;
-                    attr.Value = value;
-                    attr.Source = _script.Name;
-                    attr.Updated = DateTime.Now;
-                    if (def?.MonitorName is { } monitor && int.TryParse(value, out var port) && port is > 0 and < 65536 &&
-                        s.MonitoredPorts.All(p => p.Port != port))
-                    {
-                        s.MonitoredPorts.Add(new MonitoredPort { Port = port, Name = monitor });
-                        addedPorts = true;
-                    }
-                }
-                if (run.ExitCode == 0)
-                    s.Attributes.RemoveAll(a => a.Source == _script.Name && _manifest.IsStale(a.Key, run.Results));
-            });
+            addedPorts = ScriptRunRecorder.Record(_host.Vault, server, _script, _manifest, run, values);
         }
         catch (Exception ex)
         {

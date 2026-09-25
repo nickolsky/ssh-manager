@@ -25,6 +25,12 @@ public partial class ServerEditorWindow : Window
                 return Enumerable.Range(1, parts.Length).Select(n => string.Join("/", parts.Take(n)));
             })
             .Distinct(StringComparer.CurrentCultureIgnoreCase).OrderBy(g => g, StringComparer.CurrentCultureIgnoreCase).ToList();
+        McpBox.ItemsSource = Enum.GetValues<McpAccess>().Select(a => new McpChoice(a, McpLevelText(a))).ToList();
+        McpBox.SelectedIndex = (int)server.McpAccess;
+        foreach (var folder in server.McpFolders) McpFolderList.Items.Add(folder);
+        McpGlobalOff.Visibility = host.SettingsStore.Settings.Mcp.Enabled ? Visibility.Collapsed : Visibility.Visible;
+        McpExpander.IsExpanded = server.McpAccess != McpAccess.Off;
+        OnMcpChanged(this, null!);
         MonitorBox.Text = server.MonitorIntervalMinutes?.ToString() ?? "";
         MonitorHint.Text = L.F("Editor.MonitorHint", host.SettingsStore.Settings.MonitorIntervalMinutes);
         NameBox.Text = server.Name;
@@ -54,6 +60,52 @@ public partial class ServerEditorWindow : Window
     {
         var key = AuthKey.IsChecked == true;
         KeyPanel.Visibility = key ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // ---------- AI agent access (MCP) ----------
+
+    private sealed record McpChoice(McpAccess Access, string Text)
+    {
+        public override string ToString() => Text;
+    }
+
+    /// <summary>Menu / list text of an access level.</summary>
+    public static string McpLevelText(McpAccess a) => a switch
+    {
+        McpAccess.ReadOnly => L.Get("Mcp.LevelReadOnly"),
+        McpAccess.Reboot => L.Get("Mcp.LevelReboot"),
+        McpAccess.LimitedWrite => L.Get("Mcp.LevelLimited"),
+        McpAccess.Full => L.Get("Mcp.LevelFull"),
+        _ => L.Get("Mcp.LevelOff"),
+    };
+
+    public static string McpLevelHint(McpAccess a) => a switch
+    {
+        McpAccess.ReadOnly => L.Get("Mcp.HintReadOnly"),
+        McpAccess.Reboot => L.Get("Mcp.HintReboot"),
+        McpAccess.LimitedWrite => L.Get("Mcp.HintLimited"),
+        McpAccess.Full => L.Get("Mcp.HintFull"),
+        _ => L.Get("Mcp.HintOff"),
+    };
+
+    private void OnMcpChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        var access = (McpBox.SelectedItem as McpChoice)?.Access ?? McpAccess.Off;
+        McpHint.Text = McpLevelHint(access);
+        McpFoldersPanel.Visibility = access == McpAccess.Full ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void OnAddMcpFolder(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = L.Get("Editor.McpAddFolderTitle") };
+        if (dialog.ShowDialog(this) != true) return;
+        var folder = dialog.FolderName;
+        if (!McpFolderList.Items.OfType<string>().Contains(folder, StringComparer.OrdinalIgnoreCase)) McpFolderList.Items.Add(folder);
+    }
+
+    private void OnRemoveMcpFolder(object sender, RoutedEventArgs e)
+    {
+        if (McpFolderList.SelectedItem is { } item) McpFolderList.Items.Remove(item);
     }
 
     private void OnShowPassword(object sender, RoutedEventArgs e)
@@ -122,6 +174,8 @@ public partial class ServerEditorWindow : Window
         _server.Name = NameBox.Text.Trim() is { Length: > 0 } n ? n : host;
         _server.Group = string.Join("/", ViewModels.MainViewModel.SplitGroup(GroupBox.Text));
         _server.MonitorIntervalMinutes = monitor;
+        _server.McpAccess = (McpBox.SelectedItem as McpChoice)?.Access ?? McpAccess.Off;
+        _server.McpFolders = McpFolderList.Items.OfType<string>().ToList();
         _server.Host = host;
         _server.Port = port;
         _server.Username = user;

@@ -61,6 +61,42 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
+        <!-- scheduled jobs: some items only for one kind (crontab / file / periodic script / timer) -->
+        <Style x:Key="MiCron" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="cron">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="MiCronFile" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectedCronKind}" Value="File">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding SelectedCronKind}" Value="Periodic">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="MiCronTab" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectedCronKind}" Value="Crontab">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="MiCronTimer" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectedCronKind}" Value="Timer">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
         <Style x:Key="MiForward" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
             <Setter Property="Visibility" Value="Collapsed" />
             <Style.Triggers>
@@ -238,6 +274,12 @@
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="&#xE8B7;" FontFamily="{StaticResource IconFont}" Margin="0,1,6,0" />
                                         <TextBlock Text="{l:Tr Main.Files}" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Command="{Binding RebootCommand}" Style="{StaticResource ToolbarButton}" ToolTip="{l:Tr Main.RebootTip}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE777;" FontFamily="{StaticResource IconFont}" Margin="0,1,6,0" />
+                                        <TextBlock Text="{l:Tr Main.Reboot}" />
                                     </StackPanel>
                                 </Button>
                                 <Button Content="{l:Tr Main.AddServer}" Command="{Binding AddServerCommand}" Style="{StaticResource ToolbarButton}" ToolTip="Ctrl+N" />
@@ -422,6 +464,7 @@
                                 <ContextMenu>
                                     <MenuItem Header="{l:Tr Ctx.Connect}" Command="{Binding ConnectCommand}" FontWeight="SemiBold" Style="{StaticResource MiServer}" />
                                     <MenuItem Header="{l:Tr Ctx.Files}" Command="{Binding FilesCommand}" Style="{StaticResource MiServer}" />
+                                    <MenuItem Header="{l:Tr Ctx.Reboot}" Command="{Binding RebootCommand}" Style="{StaticResource MiServer}" />
                                     <Separator Style="{StaticResource SepServer}" />
                                     <MenuItem Header="{l:Tr Ctx.Install}" Style="{StaticResource MiServer}"
                                               ItemsSource="{Binding InstallItems}" ItemContainerStyle="{StaticResource InstallItem}" />
@@ -434,6 +477,8 @@
                                     <MenuItem Header="{l:Tr Ctx.CheckNow}" Command="{Binding CheckNowCommand}" Style="{StaticResource MiServer}" />
                                     <MenuItem Header="{l:Tr Ctx.Monitoring}" Style="{StaticResource MiServer}"
                                               ItemsSource="{Binding MonitorItems}" ItemContainerStyle="{StaticResource InstallItemLeaf}" />
+                                    <MenuItem Header="{l:Tr Ctx.McpAccess}" Style="{StaticResource MiServer}"
+                                              ItemsSource="{Binding McpItems}" ItemContainerStyle="{StaticResource InstallItemLeaf}" />
                                     <MenuItem Header="{l:Tr Ctx.UptimeHistory}" Command="{Binding UptimeHistoryCommand}" Style="{StaticResource MiServer}" />
                                     <Separator Style="{StaticResource SepServer}" />
                                     <MenuItem Header="{l:Tr Ctx.Edit}" Command="{Binding EditServerCommand}" Style="{StaticResource MiServer}" />
@@ -473,6 +518,12 @@
                                         <MenuItem Header="{l:Tr Service.AutostartOn}" IsChecked="{Binding IsServiceAutostart, Mode=OneWay}" Command="{Binding ServiceEnableCommand}" />
                                         <MenuItem Header="{l:Tr Service.AutostartOff}" IsChecked="{Binding IsServiceNoAutostart, Mode=OneWay}" Command="{Binding ServiceDisableCommand}" />
                                     </MenuItem>
+
+                                    <MenuItem Header="{l:Tr Cron.CopyLine}" Command="{Binding CronCopyCommand}" FontWeight="SemiBold" Style="{StaticResource MiCron}" />
+                                    <MenuItem Header="{l:Tr Cron.OpenFile}" Command="{Binding CronOpenFileCommand}" Style="{StaticResource MiCronFile}" />
+                                    <MenuItem Header="{l:Tr Cron.EditCrontab}" Command="{Binding CronEditCommand}" Style="{StaticResource MiCronTab}" />
+                                    <MenuItem Header="{l:Tr Cron.TimerStatus}" Command="{Binding CronTimerStatusCommand}" Style="{StaticResource MiCronTimer}" />
+                                    <MenuItem Header="{l:Tr Cron.TimerLogs}" Command="{Binding CronTimerLogsCommand}" Style="{StaticResource MiCronTimer}" />
 
                                     <MenuItem Header="{l:Tr Ctx.CopyValue}" Command="{Binding CopyAttributeCommand}" FontWeight="SemiBold" Style="{StaticResource MiAttribute}" />
                                     <MenuItem Header="{l:Tr Qr.ShowMenu}" Command="{Binding ShowAttributeQrCommand}" Style="{StaticResource MiAttributeQr}" />
@@ -765,6 +816,58 @@
                                 <TextBlock Text="{Binding BackupLastResult}" Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0" />
                             </StackPanel>
                             <TextBlock Style="{StaticResource Hint}" Text="{l:Tr Backup.Hint}" Margin="0,6,0,0" />
+
+                            <TextBlock Style="{StaticResource SectionHeader}" Text="{l:Tr Settings.Mcp}" />
+                            <CheckBox Content="{l:Tr Settings.McpEnabled}" IsChecked="{Binding McpEnabled}" />
+                            <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,0" TextWrapping="Wrap" Text="{l:Tr Settings.McpHint}" />
+                            <TextBlock Text="{Binding McpServersText}" Margin="0,6,0,0" />
+
+                            <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Settings.McpClaude}" Margin="0,10,0,4" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Text="{Binding McpClaudeCommand, Mode=OneWay}" IsReadOnly="True" FontFamily="Cascadia Mono, Consolas" FontSize="12" />
+                                <Button Grid.Column="1" Content="{l:Tr ScriptRun.Copy}" Command="{Binding CopyMcpClaudeCommand}" Margin="6,0,0,0" />
+                            </Grid>
+                            <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Settings.McpCodex}" Margin="0,10,0,4" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Text="{Binding McpCodexConfig, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True" FontFamily="Cascadia Mono, Consolas" FontSize="12" />
+                                <Button Grid.Column="1" Content="{l:Tr ScriptRun.Copy}" Command="{Binding CopyMcpCodexCommand}" Margin="6,0,0,0" VerticalAlignment="Top" />
+                            </Grid>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                <CheckBox Content="{l:Tr Settings.McpHttp}" IsChecked="{Binding McpHttpEnabled}" VerticalAlignment="Center" />
+                                <TextBlock Text="{l:Tr Settings.McpPort}" VerticalAlignment="Center" Margin="24,0,8,0" />
+                                <TextBox Width="80" Text="{Binding McpHttpPort, UpdateSourceTrigger=LostFocus}" />
+                                <Button Content="{l:Tr Settings.McpNewToken}" Command="{Binding RegenerateMcpTokenCommand}" Margin="12,0,0,0" Padding="12,4" />
+                                <TextBlock Text="{Binding McpHttpStatus}" Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0" />
+                            </StackPanel>
+                            <Grid Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Text="{Binding McpHttpCommand, Mode=OneWay}" IsReadOnly="True" FontFamily="Cascadia Mono, Consolas" FontSize="12"
+                                         IsEnabled="{Binding McpHttpEnabled}" />
+                                <Button Grid.Column="1" Content="{l:Tr ScriptRun.Copy}" Command="{Binding CopyMcpHttpCommand}" Margin="6,0,0,0" />
+                            </Grid>
+                            <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,0" TextWrapping="Wrap" Text="{l:Tr Settings.McpHttpHint}" />
+
+                            <CheckBox Content="{l:Tr Settings.McpConfirm}" IsChecked="{Binding McpConfirm}" Margin="0,12,0,0" />
+                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                <TextBlock Text="{l:Tr Settings.McpLogMb}" VerticalAlignment="Center" />
+                                <TextBox Width="60" Margin="10,0,24,0" Text="{Binding McpLogMaxMb, UpdateSourceTrigger=LostFocus}" />
+                                <TextBlock Text="{l:Tr Settings.McpLogDays}" VerticalAlignment="Center" />
+                                <TextBox Width="60" Margin="10,0,24,0" Text="{Binding McpLogDays, UpdateSourceTrigger=LostFocus}" />
+                                <Button Content="{l:Tr Ctx.AgentLog}" Command="{Binding OpenAgentLogCommand}" Padding="12,4" />
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,0" TextWrapping="Wrap" Text="{l:Tr Settings.McpLogHint}" />
 
                             <TextBlock Style="{StaticResource SectionHeader}" Text="{l:Tr Update.Title}" />
                             <StackPanel Orientation="Horizontal">

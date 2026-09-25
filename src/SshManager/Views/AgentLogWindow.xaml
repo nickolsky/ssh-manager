@@ -1,0 +1,20 @@
+<Window x:Class="SshManager.Views.AgentLogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:SshManager.Localization"
+        Title="{l:Tr AgentLog.Title}" Width="1100" Height="620" MinWidth="600" MinHeight="300"
+        WindowStartupLocation="CenterOwner">
+    <DockPanel Margin="16,12,16,14">
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+            <TextBlock Text="{l:Tr AgentLog.Server}" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <ComboBox x:Name="ServerBox" MinWidth="260" SelectionChanged="OnServerChanged" />
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                <ToggleButton x:Name="PauseButton" Content="{l:Tr AgentLog.Pause}" Margin="0,0,8,0" MinWidth="90" />
+                <Button Content="{l:Tr AgentLog.OpenFolder}" Click="OnOpenFolder" MinWidth="90" />
+            </StackPanel>
+        </DockPanel>
+        <TextBlock DockPanel.Dock="Bottom" x:Name="Status" Style="{StaticResource Hint}" Margin="0,8,0,0" />
+        <TextBox x:Name="Lines" IsReadOnly="True" FontFamily="Cascadia Mono, Consolas" FontSize="12" TextWrapping="NoWrap"
+                 HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
+    </DockPanel>
+</Window>

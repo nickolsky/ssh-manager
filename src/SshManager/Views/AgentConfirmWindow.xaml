@@ -1,0 +1,19 @@
+<Window x:Class="SshManager.Views.AgentConfirmWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:SshManager.Localization"
+        Width="520" SizeToContent="Height" ResizeMode="NoResize" Topmost="True"
+        WindowStartupLocation="CenterScreen" ShowInTaskbar="True">
+    <StackPanel Margin="24,18,24,20">
+        <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE99A;" FontFamily="{StaticResource IconFont}" FontSize="22" Margin="0,2,12,0" VerticalAlignment="Top" />
+            <TextBlock x:Name="Header" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" />
+        </StackPanel>
+        <TextBlock x:Name="Body" TextWrapping="Wrap" Margin="0,12,0,0" FontSize="13" />
+        <TextBlock x:Name="Countdown" Style="{StaticResource Hint}" Margin="0,12,0,0" />
+        <WrapPanel HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button x:Name="AllowButton" Content="{l:Tr Mcp.Allow}" Click="OnAllow" MinWidth="110" Margin="0,0,8,0" />
+            <Button Content="{l:Tr Mcp.Deny}" Click="OnDeny" IsCancel="True" IsDefault="True" MinWidth="110" Style="{DynamicResource AccentButtonStyle}" />
+        </WrapPanel>
+    </StackPanel>
+</Window>

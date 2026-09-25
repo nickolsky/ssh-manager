@@ -77,6 +77,8 @@ public sealed class BackupService(VaultService vault, SettingsService settings, 
             .Where(f => !f.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
             .Where(f => !Path.GetFileName(f).StartsWith(PreRestorePrefix, StringComparison.OrdinalIgnoreCase))
             .Where(f => exclude == null || !f.StartsWith(exclude, StringComparison.OrdinalIgnoreCase))
+            // the AI agent log is rotated on its own and is not needed to restore anything
+            .Where(f => !Path.GetRelativePath(root, f).StartsWith(Mcp.AgentLog.FolderName + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             .Select(f => (Name: Path.GetRelativePath(root, f).Replace('\\', '/'), Data: TryRead(f)))
             .Where(f => f.Data != null)
             .ToList());

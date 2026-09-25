@@ -7,7 +7,7 @@ using SshManager.Core.Storage;
 namespace SshManager.Core.Inventory;
 
 /// <summary>
-/// Logs in over SSH.NET and collects the OS, Docker containers, well-known services and NAT port forwards
+/// Logs in over SSH.NET and collects the OS, Docker containers, well-known services, scheduled jobs and NAT port forwards
 /// into <see cref="ServerEntry.Facts"/>. Read-only on the server.
 /// </summary>
 public sealed class ServerInventoryService(VaultService vault, SshClientFactory ssh)
@@ -25,8 +25,7 @@ public sealed class ServerInventoryService(VaultService vault, SshClientFactory 
           echo '@@sshm:unit-files'; systemctl list-unit-files --type=service --no-legend --no-pager 2>/dev/null; fi
         if command -v iptables >/dev/null 2>&1; then echo '@@sshm:nat'; iptables -t nat -S 2>&1; fi
         echo '@@sshm:ports'; ss -Htlnp 2>/dev/null || ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null
-        echo '@@sshm:end'
-        """;
+        """ + "\n" + CronCollector.Script + "\necho '@@sshm:end'";
 
     private readonly SemaphoreSlim _gate = new(4);
     private readonly ConcurrentDictionary<Guid, Task> _running = new();
@@ -131,6 +130,7 @@ public sealed class ServerInventoryService(VaultService vault, SshClientFactory 
             f.Forwards = IptablesParser.ParseNat(nat);
 
         if (sections.TryGetValue("ports", out var ports)) f.ListeningPorts = ListeningPortParser.Parse(ports);
+        if (CronCollector.Collected(sections)) f.CronJobs = CronCollector.Parse(sections);
 
         f.InventoryError = null;
         f.InventoryUpdated = DateTime.Now;

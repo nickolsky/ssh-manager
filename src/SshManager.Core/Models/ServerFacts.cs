@@ -16,6 +16,8 @@ public sealed class ServerFacts
     public bool DockerAvailable { get; set; }
     public List<ContainerInfo> Containers { get; set; } = [];
     public List<ServiceInfo> Services { get; set; } = [];
+    /// <summary>crontab lines of every user, /etc/crontab, /etc/cron.d, cron.daily… and systemd timers.</summary>
+    public List<CronJob> CronJobs { get; set; } = [];
     public List<PortForward> Forwards { get; set; } = [];
     /// <summary>TCP ports the server listens on (ss -tlnp).</summary>
     public List<ListeningPort> ListeningPorts { get; set; } = [];
@@ -88,6 +90,46 @@ public sealed class ServiceInfo
     public string Sub { get; set; } = "";
 
     public bool IsRunning => Active == "active";
+}
+
+public enum CronKind
+{
+    /// <summary>A user's crontab (crontab -l -u user).</summary>
+    Crontab,
+    /// <summary>/etc/crontab or a file in /etc/cron.d (lines carry the user).</summary>
+    File,
+    /// <summary>A script in /etc/cron.hourly, daily, weekly or monthly.</summary>
+    Periodic,
+    /// <summary>A systemd timer.</summary>
+    Timer,
+}
+
+/// <summary>A scheduled job on the server.</summary>
+public sealed class CronJob
+{
+    public CronKind Kind { get; set; }
+    /// <summary>Where it is defined: "crontab", "/etc/crontab", "/etc/cron.d/certbot", "/etc/cron.daily", "logrotate.timer".</summary>
+    public string Source { get; set; } = "";
+    /// <summary>Runs as (empty for timers: the service decides).</summary>
+    public string User { get; set; } = "";
+    /// <summary>"*/5 * * * *", "@reboot", "@daily" or a timer's OnCalendar= / OnBootSec= setting.</summary>
+    public string Schedule { get; set; } = "";
+    /// <summary>The command line, the script path, or the unit a timer starts.</summary>
+    public string Command { get; set; } = "";
+    /// <summary>Timers: next and last run as systemd prints them; description.</summary>
+    public string? Next { get; set; }
+    public string? Last { get; set; }
+    public string? Description { get; set; }
+    /// <summary>False for an inactive timer.</summary>
+    public bool Active { get; set; } = true;
+
+    /// <summary>The line as it would appear in a crontab file.</summary>
+    public string Line => Kind switch
+    {
+        CronKind.File => $"{Schedule} {User} {Command}",
+        CronKind.Timer => $"{Source}: {Schedule} → {Command}",
+        _ => $"{Schedule} {Command}",
+    };
 }
 
 /// <summary>A DNAT rule: traffic to ListenPort on this server goes to TargetIp:TargetPort.</summary>

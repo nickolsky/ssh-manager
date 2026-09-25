@@ -36,7 +36,7 @@ public static class AppPaths
     public static string ControlPipe => "sshmanager-ctl-" + SafeUser + InstanceSuffix;
     public static string SingleInstanceLock => @"Local\SshManager-" + Environment.UserName + InstanceSuffix;
 
-    private static string SafeUser =>
+    internal static string SafeUser =>
         new string(Environment.UserName.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray()).ToLowerInvariant();
 
     private static string? ResolveInstance()
