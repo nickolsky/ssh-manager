@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # @name VLESS REALITY (Xray в Docker) — Ubuntu
 # @name_en VLESS REALITY (Xray in Docker) — Ubuntu
+# @group VPN
 # @os ubuntu
 # @description Ставит Docker и Xray (VLESS + REALITY), открывает порт в firewall и выдаёт ссылку для клиента.
 # @description Повторный запуск генерирует новые ключи — ссылку в клиентах нужно обновить.
@@ -69,21 +70,26 @@ url_encode() {
 
 ensure_prereqs(){
   log "Ensuring prerequisites"
-  #apt-get update -y
-  #apt-get install -y curl openssl coreutils dnsutils ca-certificates gnupg lsb-release
+  # minimal images may lack these; install only what is missing (the key is used as .asc, no gpg needed)
+  local missing=() p
+  for p in curl ca-certificates openssl iproute2; do
+    dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "ok installed" || missing+=("$p")
+  done
+  if (( ${#missing[@]} )); then
+    apt-get -o DPkg::Lock::Timeout=300 update -y
+    apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends "${missing[@]}"
+  fi
 }
 
 install_docker_ubuntu() {
   log "Installing Docker Engine + compose plugin"
   install -m 0755 -d /etc/apt/keyrings
-  if [[ ! -f /etc/apt/keyrings/docker.gpg ]]; then
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
-  fi
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  chmod a+r /etc/apt/keyrings/docker.asc
 
-  local codename; codename="$(. /etc/os-release && echo "${VERSION_CODENAME:-jammy}")"
+  local codename; codename="$(. /etc/os-release && echo "${UBUNTU_CODENAME:-${VERSION_CODENAME:-noble}}")"
   cat > /etc/apt/sources.list.d/docker.list <<EOF
-deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${codename} stable
+deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${codename} stable
 EOF
 
   apt-get update -y

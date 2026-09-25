@@ -298,6 +298,135 @@ public class BuiltinScriptTests
         Assert.Equal("debian:12", BuiltinScripts.All.Single(b => b.Id == "vless-reality-debian12").Manifest.Os);
     }
 
+    [Theory]
+    [InlineData("hysteria2", "VPN", "HY2_URL")]
+    [InlineData("amneziawg", "VPN", "AWG_CLIENTS_DIR")]
+    [InlineData("static-site-nginx", "Web", "SITE_URL")]
+    [InlineData("static-site-docker", "Web", "SITE_URL")]
+    [InlineData("nextcloud", "Cloud", "NC_URL")]
+    [InlineData("seafile", "Cloud", "SF_URL")]
+    [InlineData("filebrowser", "Cloud", "FB_URL")]
+    public void Ubuntu_Debian_Builtins_Have_Metadata(string id, string group, string mainResult)
+    {
+        var b = BuiltinScripts.All.Single(x => x.Id == id);
+        var m = b.Manifest;
+        Assert.Equal(ScriptKind.Bash, b.Kind);
+        Assert.StartsWith("#!/usr/bin/env bash\n", b.Body);
+        Assert.DoesNotContain("\r", b.Body);
+        Assert.DoesNotContain("#@@", b.Body); // shared helpers were spliced in
+        Assert.Equal("ubuntu,debian", m.Os);
+        Assert.Equal(group, m.Group);
+        Assert.False(string.IsNullOrWhiteSpace(m.Name));
+        Assert.False(string.IsNullOrWhiteSpace(m.Description));
+        Assert.NotNull(m.Result(mainResult));
+        Assert.Null(m.Validate(m.InitialValues(null)));
+        var code = string.Join('\n', b.Body.Split('\n').Where(l => !l.StartsWith('#')));
+        foreach (var p in m.Params) Assert.Contains(p.Name, code);
+        foreach (var r in m.Results)
+            Assert.Contains(r.IsPattern ? $"sshm_result \"{r.Name[..^1]}" : $"sshm_result {r.Name} ", code);
+        Assert.Contains("require_debian_family", code);
+        // docker compose prefers the environment over .env, and the parameters are exported: a ${NAME} in a generated
+        // compose file (\${NAME} in the script) named like a parameter would take the raw parameter value instead
+        foreach (System.Text.RegularExpressions.Match x in System.Text.RegularExpressions.Regex.Matches(code, @"\\\$\{([A-Za-z_][A-Za-z0-9_]*)\}"))
+            Assert.DoesNotContain(m.Params, p => p.Name == x.Groups[1].Value);
+    }
+
+    /// <summary>The built-in scripts are standalone files, so shared helpers are copied: every copy must stay the same.</summary>
+    [Fact]
+    public void Shared_Helper_Blocks_Are_Identical_In_Every_Script()
+    {
+        var blocks = new Dictionary<string, (string Script, string Text)>();
+        var found = 0;
+        foreach (var b in BuiltinScripts.All)
+        {
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(b.Body,
+                         @"# ---- shared helpers: (\w+) .*?\n(.*?)# ---- end of shared helpers: \1 ----", System.Text.RegularExpressions.RegexOptions.Singleline))
+            {
+                found++;
+                var tag = m.Groups[1].Value;
+                if (blocks.TryGetValue(tag, out var first))
+                    Assert.True(first.Text == m.Groups[2].Value, $"shared helpers '{tag}' differ between {first.Script} and {b.Id}");
+                else blocks[tag] = (b.Id, m.Groups[2].Value);
+            }
+        }
+        Assert.Equal(["base", "services", "site"], blocks.Keys.Order());
+        Assert.True(found >= 7 + 7 + 2, $"only {found} blocks");
+    }
+
+    [Fact]
+    public void Pattern_Results_Get_Labels_And_Stale_Ones_Are_Found()
+    {
+        var m = ScriptManifest.Parse("# @result AWG_KEY_* label=\"Amnezia VPN\"\n# @result AWG_PORT label=Port\n# @result BAD*X*\n");
+        Assert.Equal(2, m.Results.Count);
+        Assert.Equal("Amnezia VPN — phone", m.Result("AWG_KEY_phone")!.Label);
+        Assert.Equal("AWG_KEY_phone", m.Result("AWG_KEY_phone")!.Name);
+        Assert.Null(m.Result("AWG_KEY_")); // the bare prefix is not a client
+        Assert.Equal("Port", m.Result("AWG_PORT")!.Label);
+        var reported = new Dictionary<string, string> { ["AWG_KEY_phone"] = "vpn://x", ["AWG_PORT"] = "1" };
+        Assert.True(m.IsStale("AWG_KEY_laptop", reported));
+        Assert.False(m.IsStale("AWG_KEY_phone", reported));
+        Assert.False(m.IsStale("OTHER", reported)); // only what a pattern covers is dropped
+    }
+
+    /// <summary>Qt's qCompress: 4-byte big-endian length + zlib stream, as the AmneziaWG script writes it.</summary>
+    private static string VpnKey(string json)
+    {
+        var raw = System.Text.Encoding.UTF8.GetBytes(json);
+        using var ms = new MemoryStream();
+        ms.Write([(byte)(raw.Length >> 24), (byte)(raw.Length >> 16), (byte)(raw.Length >> 8), (byte)raw.Length]);
+        using (var z = new System.IO.Compression.ZLibStream(ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true)) z.Write(raw);
+        return "vpn://" + Convert.ToBase64String(ms.ToArray()).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    }
+
+    [Fact]
+    public void Amnezia_Keys_Decode_To_The_Config()
+    {
+        var conf = "[Interface]\nPrivateKey = abc\nJc = 4\n\n[Peer]\nEndpoint = 1.2.3.4:51820\n";
+        var last = System.Text.Json.JsonSerializer.Serialize(new { config = conf, hostName = "1.2.3.4" });
+        var key = VpnKey(System.Text.Json.JsonSerializer.Serialize(new
+        {
+            containers = new object[] { new Dictionary<string, object> { ["container"] = "amnezia-awg", ["awg"] = new { last_config = last } } },
+            defaultContainer = "amnezia-awg",
+            description = "vps — phone",
+        }));
+        Assert.Equal(conf, AmneziaKey.WireGuardConfig(key));
+        Assert.Equal("vps — phone", AmneziaKey.Description(key));
+        Assert.Null(AmneziaKey.Decode("vpn://not-base64!"));
+        Assert.Null(AmneziaKey.Decode("vless://x"));
+        Assert.Null(AmneziaKey.Decode(key[..^6])); // truncated
+
+        var qr = QrPayloads.For(key);
+        Assert.Equal(2, qr.Count);
+        Assert.Equal(conf, qr[0].Text);       // AmneziaWG and Amnezia VPN scan the .conf
+        Assert.Equal(conf, qr[0].FileText);
+        Assert.Equal(key[6..], qr[1].Text);   // Amnezia VPN's own QR codes carry the key without "vpn://"
+        Assert.Equal(key, qr[1].CopyText);
+    }
+
+    [Fact]
+    public void Qr_Codes_Are_Offered_For_Links_Only()
+    {
+        Assert.Single(QrPayloads.For("vless://id@1.2.3.4:443?security=reality#x"));
+        Assert.Null(QrPayloads.For("hysteria2://pw@1.2.3.4:443/?sni=a#b")[0].Title);
+        Assert.True(QrPayloads.CanShow("https://cloud.example.com"));
+        Assert.False(QrPayloads.CanShow("443"));
+        Assert.False(QrPayloads.CanShow("/opt/amneziawg/clients"));
+        Assert.False(QrPayloads.CanShow("vless://a b"));
+        Assert.False(QrPayloads.CanShow("vless://" + new string('a', QrPayloads.MaxBytes)));
+        Assert.Single(QrPayloads.For("vpn://AAAA")); // not decodable: only the key itself
+    }
+
+    [Fact]
+    public void Groups_Are_Ordered_And_Translated()
+    {
+        Assert.True(ScriptManifest.GroupOrder("VPN") < ScriptManifest.GroupOrder("web"));
+        Assert.True(ScriptManifest.GroupOrder("Cloud") < ScriptManifest.GroupOrder("Mine"));
+        Assert.Equal("Mine", ScriptManifest.GroupLabel("Mine"));
+        Assert.Equal("VPN", ScriptManifest.Parse("# @group VPN\necho").Group);
+        Assert.Null(ScriptManifest.Parse("# @group\necho").Group);
+        Assert.All(BuiltinScripts.All.Where(b => b.Id.StartsWith("vless-")), b => Assert.Equal("VPN", b.Manifest.Group));
+    }
+
     [Fact]
     public void Sync_Adds_Updates_And_Respects_Edits()
     {
@@ -318,6 +447,17 @@ public class BuiltinScriptTests
         var v3 = new BuiltinScript("demo", "# @name Demo\necho 3\n");
         Assert.False(BuiltinScripts.Sync(data, [v3])); // edited copy is left alone
         Assert.Contains("echo mine", s.Body);
+
+        // a built-in the app no longer ships: an unedited copy goes, an edited one stays as the user's script
+        var gone = new BuiltinScript("gone", "# @name Gone\necho gone\n");
+        var kept = new BuiltinScript("kept", "# @name Kept\necho kept\n");
+        var fresh = new VaultData();
+        BuiltinScripts.Sync(fresh, [gone, kept, v3]);
+        fresh.Scripts.Single(x => x.BuiltinId == "kept").Body += "echo mine\n";
+        Assert.True(BuiltinScripts.Sync(fresh, [v3]));
+        Assert.DoesNotContain(fresh.Scripts, x => x.BuiltinId == "gone");
+        Assert.Contains(fresh.Scripts, x => x.BuiltinId == "kept");
+        Assert.False(BuiltinScripts.Sync(fresh, [v3]));
 
         data.Scripts.Clear();
         data.RemovedBuiltins.Add("demo");

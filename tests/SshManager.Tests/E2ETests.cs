@@ -140,7 +140,7 @@ public class E2ETests
         {
             var self = r.Results["SELF"];
             var stem = self[..^3];
-            Assert.Contains("gone", client.RunCommand($"test -e {self} -o -e {stem}.env -o -e {stem}.result || echo gone").Result);
+            Assert.Contains("gone", client.RunCommand($"test -e {self} -o -e {stem}.env -o -e {stem}.result -o -e $(dirname {self}) || echo gone").Result);
         }
 
         // cancelling stops the run

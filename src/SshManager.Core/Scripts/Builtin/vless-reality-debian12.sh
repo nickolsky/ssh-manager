@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # @name VLESS REALITY (Xray в Docker) — Debian 12, мало места
 # @name_en VLESS REALITY (Xray in Docker) — Debian 12, small disk
+# @group VPN
 # @os debian:12
 # @description Для серверов с ~2 ГБ диска: Docker из репозитория Debian, ограниченные логи Xray и journald.
 # @description Повторный запуск генерирует новые ключи — ссылку в клиентах нужно обновить.

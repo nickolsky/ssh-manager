@@ -30,18 +30,26 @@ public sealed record ScriptParam(
 /// <summary>Value a script reports back; stored as a server attribute.</summary>
 /// <param name="MonitorName">When set, the value is a port the app starts monitoring under this name.</param>
 /// <param name="Template">Value computed by the app after a successful run, e.g. "http://${SSHM_HOST}:${PORT}".</param>
-public sealed record ScriptResultDef(string Name, string Label, string? MonitorName, string? Template = null);
+/// <param name="Name">"AWG_KEY_*" (a trailing star) covers every result starting with "AWG_KEY_": one per client and so on.</param>
+public sealed record ScriptResultDef(string Name, string Label, string? MonitorName, string? Template = null)
+{
+    public bool IsPattern => Name.EndsWith('*');
+
+    public bool Covers(string key) => IsPattern ? key.Length > Name.Length - 1 && key.StartsWith(Name[..^1], StringComparison.Ordinal) : key == Name;
+}
 
 /// <summary>
 /// Metadata in the script's comment lines:
 /// <code>
 /// # @name    VLESS REALITY (Docker)
 /// # @os      ubuntu,debian:12
+/// # @group   VPN
 /// # @param   XRAY_PORT number label="Порт" label_en="Port" default=443 required
 /// # @param   XRAY_TRANSPORT choice options=xhttp,tcp default=xhttp
 /// # @param   XHTTP_PATH text default=/xhttp when=XRAY_TRANSPORT=xhttp
 /// # @result  VLESS_URL label="Ссылка VLESS"
 /// # @result  XRAY_PORT label="Порт Xray" monitor=Xray
+/// # @result  AWG_KEY_* label="Amnezia VPN"          (AWG_KEY_phone, AWG_KEY_laptop… labelled "Amnezia VPN — phone")
 /// </code>
 /// Results are written by the script as KEY=value lines to the file named by $SSHM_RESULT.
 /// </summary>
@@ -50,6 +58,8 @@ public sealed partial class ScriptManifest
     public string? Name { get; private set; }
     public string? Os { get; private set; }
     public string? Description { get; private set; }
+    /// <summary>Submenu in "Install ▸" (VPN, Web, Cloud or any other name); null = top level.</summary>
+    public string? Group { get; private set; }
     /// <summary>Compose scripts: folder name under /opt (default: derived from the name).</summary>
     public string? Project { get; private set; }
     public List<ScriptParam> Params { get; } = [];
@@ -81,6 +91,9 @@ public sealed partial class ScriptManifest
                 case "@os":
                     m.Os = rest;
                     break;
+                case "@group":
+                    if (rest.Length > 0) m.Group = rest;
+                    break;
                 case "@project":
                     if (ProjectName().IsMatch(rest)) m.Project = rest;
                     break;
@@ -102,7 +115,35 @@ public sealed partial class ScriptManifest
         return m;
     }
 
-    public ScriptResultDef? Result(string name) => Results.FirstOrDefault(r => r.Name == name);
+    /// <summary>The definition of a result; for one matched by a pattern (AWG_KEY_* for AWG_KEY_phone) its label gets the rest of the name.</summary>
+    public ScriptResultDef? Result(string name)
+    {
+        if (Results.FirstOrDefault(r => r.Name == name) is { } exact) return exact;
+        if (Results.FirstOrDefault(r => r.IsPattern && r.Covers(name)) is not { } pattern) return null;
+        return pattern with { Name = name, Label = $"{pattern.Label} — {name[(pattern.Name.Length - 1)..]}" };
+    }
+
+    /// <summary>
+    /// Results kept from earlier runs that a pattern covers but this run no longer reported (a client that was removed):
+    /// they are dropped after a successful run.
+    /// </summary>
+    public bool IsStale(string key, IReadOnlyDictionary<string, string> reported) =>
+        !reported.ContainsKey(key) && Results.Any(r => r.IsPattern && r.Covers(key));
+
+    private static readonly string[] KnownGroups = ["VPN", "Web", "Cloud"];
+
+    /// <summary>Built-in groups first, in this order; the user's own after them.</summary>
+    public static int GroupOrder(string group) =>
+        Array.FindIndex(KnownGroups, g => g.Equals(group, StringComparison.OrdinalIgnoreCase)) is var i and >= 0 ? i : KnownGroups.Length;
+
+    /// <summary>Menu title of a group: translated for the built-in ones, as written otherwise.</summary>
+    public static string GroupLabel(string group) => GroupOrder(group) switch
+    {
+        0 => L.Get("Scripts.Group.VPN"),
+        1 => L.Get("Scripts.Group.Web"),
+        2 => L.Get("Scripts.Group.Cloud"),
+        _ => group,
+    };
 
     /// <summary>Defaults for every parameter, overridden by <paramref name="previous"/> (last run on this server).</summary>
     public Dictionary<string, string> InitialValues(IReadOnlyDictionary<string, string>? previous)
@@ -163,7 +204,7 @@ public sealed partial class ScriptManifest
     private static ScriptResultDef? ParseResult(string text)
     {
         var tokens = Tokenize(text);
-        if (tokens.Count == 0 || !EnvName().IsMatch(tokens[0])) return null;
+        if (tokens.Count == 0 || !EnvName().IsMatch(tokens[0].TrimEnd('*')) || tokens[0].Count(c => c == '*') > 1) return null;
         var attrs = tokens.Skip(1).Where(t => t.IndexOf('=') > 0)
             .ToDictionary(t => t[..t.IndexOf('=')], t => t[(t.IndexOf('=') + 1)..], StringComparer.OrdinalIgnoreCase);
         return new ScriptResultDef(tokens[0], Localized(attrs, "label") ?? tokens[0], attrs.GetValueOrDefault("monitor"),

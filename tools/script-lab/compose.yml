@@ -1,0 +1,84 @@
+# Test servers for SSH Manager install scripts. Start: .\lab.ps1 up   (see README.md)
+# Each one runs systemd and its own Docker (/var/lib/docker and /var/lib/containerd on volumes:
+# overlayfs cannot sit on the container's own overlay), like a small VPS.
+x-lab: &lab
+  build: .
+  privileged: true
+  cgroup: host
+  tmpfs:
+    - /run
+    - /run/lock
+    - /tmp:exec
+  volumes:
+    - /sys/fs/cgroup:/sys/fs/cgroup:rw
+  restart: "no"
+
+services:
+  ubuntu:
+    <<: *lab
+    build: { context: ., args: { BASE: "ubuntu:24.04" } }
+    hostname: lab-ubuntu
+    container_name: sshm-lab-ubuntu
+    ports:
+      - "2201:22"
+      - "18001:8080"   # static site (Docker) / Nextcloud
+      - "18002:8081"   # File Browser
+      - "18003:8000"   # Seafile
+      - "18004:80"     # nginx
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - ubuntu-docker:/var/lib/docker
+      - ubuntu-containerd:/var/lib/containerd
+
+  debian:
+    <<: *lab
+    build: { context: ., args: { BASE: "debian:12" } }
+    hostname: lab-debian
+    container_name: sshm-lab-debian
+    ports:
+      - "2202:22"
+      - "18011:8080"
+      - "18012:8081"
+      - "18013:8000"
+      - "18014:80"
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - debian-docker:/var/lib/docker
+      - debian-containerd:/var/lib/containerd
+
+  # older / newer releases: docker compose --profile extra up -d  (.\lab.ps1 up -Extra)
+  ubuntu22:
+    <<: *lab
+    profiles: [extra]
+    build: { context: ., args: { BASE: "ubuntu:22.04" } }
+    hostname: lab-ubuntu22
+    container_name: sshm-lab-ubuntu22
+    ports:
+      - "2203:22"
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - ubuntu22-docker:/var/lib/docker
+      - ubuntu22-containerd:/var/lib/containerd
+
+  debian13:
+    <<: *lab
+    profiles: [extra]
+    build: { context: ., args: { BASE: "debian:13" } }
+    hostname: lab-debian13
+    container_name: sshm-lab-debian13
+    ports:
+      - "2204:22"
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - debian13-docker:/var/lib/docker
+      - debian13-containerd:/var/lib/containerd
+
+volumes:
+  ubuntu-docker:
+  ubuntu-containerd:
+  debian-docker:
+  debian-containerd:
+  ubuntu22-docker:
+  ubuntu22-containerd:
+  debian13-docker:
+  debian13-containerd:

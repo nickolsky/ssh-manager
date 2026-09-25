@@ -31,9 +31,9 @@ public sealed class KeyRow(KeyEntry entry, string usedBy)
     public string Created => Entry.Created.ToString("d", L.Culture);
 }
 
-/// <summary>Entry of a dynamically built context submenu ("Install ▸").</summary>
+/// <summary>Entry of a dynamically built context submenu ("Install ▸", "Monitoring ▸").</summary>
 public sealed record MenuEntry(string Header, ICommand? Command = null, object? Parameter = null, bool Bold = false,
-    IReadOnlyList<MenuEntry>? Children = null)
+    IReadOnlyList<MenuEntry>? Children = null, bool Checked = false)
 {
     public bool Enabled => Command != null || Children is { Count: > 0 };
 }
@@ -72,6 +72,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         TestCommand = new RelayCommand(Test, HasServer);
         RefreshInfoCommand = new RelayCommand(() => _host.RefreshServer(SelectedServer!.Entry.Id), HasServer);
         CheckNowCommand = new RelayCommand(() => _host.Health.CheckNow(SelectedServer!.Entry.Id), HasServer);
+        SetMonitorIntervalCommand = new RelayCommand(p => SetMonitorInterval(p is int m ? m : null), _ => HasServer());
         PortForwardsCommand = new RelayCommand(OpenPortForwards, HasServer);
         PortMonitorCommand = new RelayCommand(OpenPortMonitor, HasServer);
         TogglePortCommand = new RelayCommand(TogglePort, () => SelectedNode is PortNode { CanMonitor: true });
@@ -79,6 +80,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         UptimeHistoryCommand = new RelayCommand(OpenUptimeHistory, () => SelectedServer != null);
         InstallDockerCommand = new RelayCommand(InstallDocker, () => HasServer() && SelectedServer!.Entry.Facts?.DockerAvailable != true);
         CopyAttributeCommand = new RelayCommand(CopyAttribute, () => SelectedNode is AttributeNode);
+        ShowAttributeQrCommand = new RelayCommand(ShowAttributeQr, () => SelectedAttributeHasQr);
         DeleteAttributeCommand = new RelayCommand(DeleteAttribute, () => SelectedNode is AttributeNode);
         ContainerLogsCommand = new RelayCommand(() => QuickAction(n => n is ContainerNode c ? ScriptRunner.DockerLogs(n.Server!.Entry, c.Info.Name) : null, "docker logs"), () => SelectedNode is ContainerNode);
         ContainerRestartCommand = new RelayCommand(() => ContainerAction(ContainerCommands.Restart, "Container.Restarting", "Container.Restarted"),
@@ -140,6 +142,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ObservableCollection<TreeNode> Roots { get; } = [];
     public ObservableCollection<KeyRow> Keys { get; } = [];
     public ObservableCollection<MenuEntry> InstallItems { get; } = [];
+    public ObservableCollection<MenuEntry> MonitorItems { get; } = [];
 
     public TreeNode? SelectedNode
     {
@@ -149,6 +152,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (!Set(ref _selectedNode, value)) return;
             OnPropertyChanged(nameof(SelectedServer));
             OnPropertyChanged(nameof(SelectionKind));
+            OnPropertyChanged(nameof(SelectedAttributeHasQr));
             OnPropertyChanged(nameof(IsRestartNo));
             OnPropertyChanged(nameof(IsRestartUnlessStopped));
             OnPropertyChanged(nameof(IsRestartAlways));
@@ -160,6 +164,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     public ServerNode? SelectedServer => _selectedNode?.Server;
+
+    /// <summary>The selected script result is a link (VPN, site, Amnezia key) that can be shown as a QR code.</summary>
+    public bool SelectedAttributeHasQr => _selectedNode is AttributeNode a && QrPayloads.CanShow(a.Attribute.Value);
 
     /// <summary>group, server, container, service, forward, other — drives context menu visibility.</summary>
     public string SelectionKind => _selectedNode switch
@@ -247,6 +254,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ICommand TestCommand { get; }
     public ICommand RefreshInfoCommand { get; }
     public ICommand CheckNowCommand { get; }
+    public ICommand SetMonitorIntervalCommand { get; }
     public ICommand PortForwardsCommand { get; }
     public ICommand PortMonitorCommand { get; }
     public ICommand TogglePortCommand { get; }
@@ -254,6 +262,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ICommand UptimeHistoryCommand { get; }
     public ICommand InstallDockerCommand { get; }
     public ICommand CopyAttributeCommand { get; }
+    public ICommand ShowAttributeQrCommand { get; }
     public ICommand DeleteAttributeCommand { get; }
     public ICommand ContainerLogsCommand { get; }
     public ICommand ContainerRestartCommand { get; }
@@ -564,6 +573,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// <summary>Fills "Install ▸" for the selected server: scripts for its OS first, the rest under "Other".</summary>
     public void PrepareContextMenu()
     {
+        PrepareMonitorMenu();
         InstallItems.Clear();
         var server = SelectedServer?.Entry;
         var scripts = _host.Vault.IsUnlocked ? _host.Vault.Data.Scripts.OrderBy(s => s.Name, StringComparer.CurrentCultureIgnoreCase).ToList() : [];
@@ -574,14 +584,81 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         var matching = scripts.Where(s => s.Matches(server?.Facts)).ToList();
         var other = scripts.Except(matching).ToList();
-        foreach (var s in matching)
-            InstallItems.Add(new MenuEntry(MenuName(s), RunScriptCommand, s, Bold: !string.IsNullOrWhiteSpace(s.OsFilter)));
+        foreach (var e in Grouped(matching, s => new MenuEntry(MenuName(s), RunScriptCommand, s, Bold: !string.IsNullOrWhiteSpace(s.OsFilter))))
+            InstallItems.Add(e);
         if (other.Count > 0)
         {
-            var children = other.Select(s => new MenuEntry($"{MenuName(s)}  ({s.OsFilter})", RunScriptCommand, s)).ToList();
+            var children = Grouped(other, s => new MenuEntry($"{MenuName(s)}  ({s.OsFilter})", RunScriptCommand, s));
             if (matching.Count == 0) foreach (var c in children) InstallItems.Add(c);
             else InstallItems.Add(new MenuEntry(L.Get("Scripts.OtherOs"), Children: children));
         }
+    }
+
+    /// <summary>Availability check choices for "Monitoring ▸"; null = the default from Settings, 0 = off.</summary>
+    private static readonly (int? Minutes, string Key)[] MonitorChoices =
+    [
+        (null, "Monitor.Default"), (1, "Monitor.Every1"), (5, "Monitor.Every5"), (15, "Monitor.Every15"), (30, "Monitor.Every30"),
+        (60, "Monitor.Every60"), (360, "Monitor.Every360"), (1440, "Monitor.Every1440"), (0, "Monitor.Off"),
+    ];
+
+    /// <summary>Fills "Monitoring ▸" for the selected server, the current choice checked.</summary>
+    private void PrepareMonitorMenu()
+    {
+        MonitorItems.Clear();
+        if (SelectedServer?.Entry is not { } server) return;
+        var current = server.MonitorIntervalMinutes;
+        foreach (var (minutes, key) in MonitorChoices)
+        {
+            var header = minutes == null ? L.F(key, MonitorLabel(_host.SettingsStore.Settings.MonitorIntervalMinutes)) : L.Get(key);
+            MonitorItems.Add(new MenuEntry(header, SetMonitorIntervalCommand, minutes, Checked: current == minutes));
+        }
+        if (current is { } own && MonitorChoices.All(c => c.Minutes != own))
+            MonitorItems.Insert(MonitorItems.Count - 1, new MenuEntry(L.F("Monitor.Custom", own), SetMonitorIntervalCommand, own, Checked: true));
+    }
+
+    private static string MonitorLabel(int minutes)
+    {
+        if (minutes <= 0) return L.Get("Monitor.Off").ToLower(L.Culture);
+        var known = MonitorChoices.FirstOrDefault(c => c.Minutes == minutes).Key;
+        return (known != null ? L.Get(known) : L.F("Monitor.Custom", minutes)).ToLower(L.Culture);
+    }
+
+    private void SetMonitorInterval(int? minutes)
+    {
+        if (SelectedServer?.Entry is not { } server) return;
+        var id = server.Id;
+        try
+        {
+            _host.Vault.Update(d =>
+            {
+                if (d.Servers.FirstOrDefault(s => s.Id == id) is { } s) s.MonitorIntervalMinutes = minutes;
+            });
+        }
+        catch (Exception ex)
+        {
+            Warn(L.Get("Ctx.Monitoring"), ex.Message);
+            return;
+        }
+        _host.Health.Reschedule();
+        var effective = minutes ?? _host.SettingsStore.Settings.MonitorIntervalMinutes;
+        if (effective > 0) _host.Health.CheckNow(id);
+        Status = minutes switch
+        {
+            null => L.F("Monitor.ChangedDefault", server.Name, MonitorLabel(_host.SettingsStore.Settings.MonitorIntervalMinutes)),
+            <= 0 => L.F("Monitor.TurnedOff", server.Name),
+            _ => L.F("Monitor.Changed", server.Name, MonitorLabel(minutes.Value)),
+        };
+    }
+
+    /// <summary>Scripts with an @group go into a submenu per group (groups first), the rest stay at this level.</summary>
+    private static List<MenuEntry> Grouped(List<ScriptEntry> scripts, Func<ScriptEntry, MenuEntry> item)
+    {
+        var result = new List<MenuEntry>();
+        var byGroup = scripts.GroupBy(s => ScriptManifest.Parse(s.Body).Group).ToList();
+        foreach (var g in byGroup.Where(g => g.Key != null).OrderBy(g => ScriptManifest.GroupOrder(g.Key!)).ThenBy(g => g.Key, StringComparer.CurrentCultureIgnoreCase))
+            result.Add(new MenuEntry(ScriptManifest.GroupLabel(g.Key!), Children: g.Select(item).ToList()));
+        result.AddRange(byGroup.Where(g => g.Key == null).SelectMany(g => g).Select(item));
+        return result;
     }
 
     // ---------- servers ----------
@@ -773,6 +850,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (SelectedNode is not AttributeNode a) return;
         Clipboard.SetText(a.Attribute.Value);
         Status = L.F("Attr.Copied", a.Attribute.Label);
+    }
+
+    private void ShowAttributeQr()
+    {
+        if (SelectedNode is not AttributeNode a || !QrPayloads.CanShow(a.Attribute.Value)) return;
+        var label = a.Server is { } s ? $"{s.Entry.Name}: {a.Attribute.Label}" : a.Attribute.Label;
+        new QrWindow(label, a.Attribute.Value) { Owner = Owner }.Show();
     }
 
     private void DeleteAttribute()

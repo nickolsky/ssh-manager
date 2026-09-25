@@ -48,7 +48,11 @@ public sealed class ParamRow(ScriptParam param, string value, Action changed) : 
     }
 }
 
-public sealed record ResultRow(string Label, string Value);
+public sealed record ResultRow(string Label, string Value)
+{
+    /// <summary>The QR button: links (VPN, sites, Amnezia keys) only.</summary>
+    public Visibility QrVisibility => QrPayloads.CanShow(Value) ? Visibility.Visible : Visibility.Collapsed;
+}
 
 /// <summary>
 /// Runs an install script on one server inside the app: parameter form, live output, and results
@@ -299,6 +303,8 @@ public partial class ScriptRunWindow : Window
                         addedPorts = true;
                     }
                 }
+                if (run.ExitCode == 0)
+                    s.Attributes.RemoveAll(a => a.Source == _script.Name && _manifest.IsStale(a.Key, run.Results));
             });
         }
         catch (Exception ex)
@@ -315,6 +321,12 @@ public partial class ScriptRunWindow : Window
         ResultsList.ItemsSource = results.Select(r => new ResultRow(_manifest.Result(r.Key)?.Label ?? r.Key, r.Value)).ToList();
         ResultsHeader.Text = L.F("ScriptRun.ResultsSaved", results.Count);
         ResultsBox.Visibility = Visibility.Visible;
+    }
+
+    private void OnShowQr(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: ResultRow row } && QrPayloads.CanShow(row.Value))
+            new QrWindow($"{Server()?.Name}: {row.Label}", row.Value) { Owner = this }.Show();
     }
 
     private void OnCopyResult(object sender, RoutedEventArgs e)

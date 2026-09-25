@@ -42,11 +42,15 @@ public static class BuiltinScripts
     public static string Hash(string body) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body.Replace("\r\n", "\n")))).ToLowerInvariant()[..16];
 
-    /// <summary>Adds missing built-ins and refreshes unedited ones. Returns true when <paramref name="data"/> changed.</summary>
+    /// <summary>
+    /// Adds missing built-ins, refreshes unedited ones and removes unedited copies of built-ins the app no longer ships
+    /// (an edited copy stays: it is the user's script now). Returns true when <paramref name="data"/> changed.
+    /// </summary>
     public static bool Sync(VaultData data, IReadOnlyList<BuiltinScript>? builtins = null)
     {
-        var changed = false;
-        foreach (var b in builtins ?? All)
+        builtins ??= All;
+        var changed = data.Scripts.RemoveAll(s => s.BuiltinId != null && builtins.All(b => b.Id != s.BuiltinId) && IsUnedited(s)) > 0;
+        foreach (var b in builtins)
         {
             var hash = Hash(b.Body);
             var m = b.Manifest;

@@ -92,6 +92,15 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
+        <!-- a script result that is a link (VPN, site, Amnezia key) -->
+        <Style x:Key="MiAttributeQr" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectedAttributeHasQr}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
 
         <Style x:Key="UptimeText" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
             <Style.Triggers>
@@ -139,6 +148,7 @@
             <Setter Property="Header" Value="{Binding Header}" />
             <Setter Property="Command" Value="{Binding Command}" />
             <Setter Property="CommandParameter" Value="{Binding Parameter}" />
+            <Setter Property="IsChecked" Value="{Binding Checked, Mode=OneWay}" />
             <Style.Triggers>
                 <DataTrigger Binding="{Binding Bold}" Value="True">
                     <Setter Property="FontWeight" Value="SemiBold" />
@@ -422,6 +432,8 @@
                                     <MenuItem Header="{l:Tr Ctx.PortMonitor}" Command="{Binding PortMonitorCommand}" Style="{StaticResource MiPorts}" />
                                     <MenuItem Header="{l:Tr Ctx.RefreshInfo}" Command="{Binding RefreshInfoCommand}" Style="{StaticResource MiServer}" />
                                     <MenuItem Header="{l:Tr Ctx.CheckNow}" Command="{Binding CheckNowCommand}" Style="{StaticResource MiServer}" />
+                                    <MenuItem Header="{l:Tr Ctx.Monitoring}" Style="{StaticResource MiServer}"
+                                              ItemsSource="{Binding MonitorItems}" ItemContainerStyle="{StaticResource InstallItemLeaf}" />
                                     <MenuItem Header="{l:Tr Ctx.UptimeHistory}" Command="{Binding UptimeHistoryCommand}" Style="{StaticResource MiServer}" />
                                     <Separator Style="{StaticResource SepServer}" />
                                     <MenuItem Header="{l:Tr Ctx.Edit}" Command="{Binding EditServerCommand}" Style="{StaticResource MiServer}" />
@@ -463,6 +475,7 @@
                                     </MenuItem>
 
                                     <MenuItem Header="{l:Tr Ctx.CopyValue}" Command="{Binding CopyAttributeCommand}" FontWeight="SemiBold" Style="{StaticResource MiAttribute}" />
+                                    <MenuItem Header="{l:Tr Qr.ShowMenu}" Command="{Binding ShowAttributeQrCommand}" Style="{StaticResource MiAttributeQr}" />
                                     <MenuItem Header="{l:Tr Ctx.DeleteAttribute}" Command="{Binding DeleteAttributeCommand}" Style="{StaticResource MiAttribute}" />
 
                                     <MenuItem Header="{l:Tr Ctx.AddServer}" Command="{Binding AddServerCommand}" Style="{StaticResource MiGroup}" />

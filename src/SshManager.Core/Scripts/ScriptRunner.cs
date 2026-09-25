@@ -11,7 +11,7 @@ public sealed record ScriptRunResult(int ExitCode, Dictionary<string, string> Re
 }
 
 /// <summary>
-/// Runs install scripts. The script and its parameters are uploaded over SFTP to /tmp (never on a command line)
+/// Runs install scripts. The script and its parameters are uploaded over SFTP to a private folder in /tmp (never on a command line)
 /// and removed when it ends. Two ways to run:
 /// in the app (output streamed back, results collected from $SSHM_RESULT) or in a terminal tab (interactive).
 /// </summary>
@@ -20,10 +20,12 @@ public sealed partial class ScriptRunner(SshClientFactory ssh)
     /// <summary>Printed after the script's own output; what follows is the content of $SSHM_RESULT.</summary>
     internal const string ResultMarker = "@@sshm:result:7f3c";
 
-    private sealed record Upload(string Script, string Env, string Result, IReadOnlyList<string> Extra)
+    /// <param name="Dir">Private folder (0700) holding everything: files right in /tmp could not be appended to by root
+    /// through sudo, because fs.protected_regular forbids that for other users' files in sticky folders.</param>
+    private sealed record Upload(string Dir, string Script, string Env, string Result)
     {
-        /// <summary>rm -f command for everything uploaded.</summary>
-        public string Remove => "rm -f " + string.Join(' ', new[] { Script, Env, Result }.Concat(Extra).Select(RemoteShell.Quote));
+        /// <summary>Command removing everything uploaded.</summary>
+        public string Remove => "rm -rf " + RemoteShell.Quote(Dir);
     }
 
     // ---------- in the app ----------
@@ -157,7 +159,8 @@ public sealed partial class ScriptRunner(SshClientFactory ssh)
     private Upload UploadFiles(ServerEntry server, ScriptEntry script, IReadOnlyDictionary<string, string> values)
     {
         var id = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
-        var stem = $"/tmp/sshm-{id}";
+        var dir = $"/tmp/sshm-{id}";
+        var stem = $"{dir}/run";
         var body = script.Body.Replace("\r\n", "\n");
         if (!body.EndsWith('\n')) body += "\n";
         var extra = new List<(string Path, string Text)>();
@@ -171,11 +174,13 @@ public sealed partial class ScriptRunner(SshClientFactory ssh)
             system["SSHM_DOTENV"] = $"{stem}.dotenv";
             body = ComposeDeploy(ScriptManifest.ProjectFor(script, ScriptManifest.Parse(script.Body)));
         }
-        var f = new Upload($"{stem}.sh", $"{stem}.env", $"{stem}.result", extra.Select(e => e.Path).ToList());
+        var f = new Upload(dir, $"{stem}.sh", $"{stem}.env", $"{stem}.result");
         using var sftp = ssh.ConnectSftp(server);
-        Write(sftp, f.Script, body, 700); // SSH.NET reads the digits as octal
+        sftp.CreateDirectory(dir); // fails when it exists: nobody else can have prepared it
+        sftp.ChangePermissions(dir, 700); // SSH.NET reads the digits as octal
+        Write(sftp, f.Script, body, 700);
         Write(sftp, f.Env, EnvFile(server, values, f.Result, system), 600);
-        Write(sftp, f.Result, "", 600); // root (sudo) can append to it too
+        Write(sftp, f.Result, "", 600); // root (sudo) appends to it
         foreach (var (path, text) in extra) Write(sftp, path, text, 600);
         return f;
     }
