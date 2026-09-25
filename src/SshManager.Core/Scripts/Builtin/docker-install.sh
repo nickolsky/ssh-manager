@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # @name Docker Engine + Docker Compose
 # @name_en Docker Engine + Docker Compose
-# @description Ставит Docker официальным скриптом get.docker.com (Debian, Ubuntu, CentOS, RHEL, Fedora…) и включает автозапуск.
+# @description Ставит Docker официальным скриптом get.docker.com (Debian, Ubuntu, CentOS, RHEL, Fedora; Rocky и AlmaLinux — из репозитория Docker для CentOS) и включает автозапуск.
 # @description Если Docker уже установлен, только проверяет его и показывает версии.
-# @description_en Installs Docker with the official get.docker.com script (Debian, Ubuntu, CentOS, RHEL, Fedora…) and enables it on boot.
+# @description_en Installs Docker with the official get.docker.com script (Debian, Ubuntu, CentOS, RHEL, Fedora; Rocky and AlmaLinux from Docker's CentOS repository) and enables it on boot.
 # @description_en If Docker is already there, it only checks it and shows the versions.
 #
 # @param DOCKER_MIRROR choice options=official,Aliyun,AzureChinaCloud default=official label="Откуда качать пакеты" label_en="Package mirror" hint="official — download.docker.com; зеркала — если он недоступен из региона сервера" hint_en="official = download.docker.com; mirrors help when it is blocked in the server's region"
@@ -35,8 +35,24 @@ fetch(){ # url file
   fi
 }
 
+os_id=""; os_like=""
+if [[ -r /etc/os-release ]]; then os_id="$(. /etc/os-release; echo "${ID:-}")"; os_like="$(. /etc/os-release; echo "${ID_LIKE:-}")"; fi
+
 if cmd docker && docker compose version >/dev/null 2>&1; then
   log "Docker is already installed"
+elif [[ " ${os_like} " == *" rhel "* && "$os_id" != centos && "$os_id" != rhel && "$os_id" != fedora ]] && cmd dnf; then
+  # Rocky, AlmaLinux and other RHEL rebuilds: get.docker.com does not know them, the CentOS repository fits them
+  log "Installing Docker Engine + compose plugin (download.docker.com, CentOS repository)"
+  host=download.docker.com
+  case "${DOCKER_MIRROR:-official}" in
+    Aliyun) host=mirrors.aliyun.com/docker-ce ;;
+    AzureChinaCloud) host=mirror.azure.cn/docker-ce ;;
+  esac
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
+  fetch "https://${host}/linux/centos/docker-ce.repo" "$tmp"
+  sed "s#https://download.docker.com#https://${host}#g" "$tmp" > /etc/yum.repos.d/docker-ce.repo
+  dnf -y -q install --allowerasing docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 else
   log "Installing Docker Engine + compose plugin (get.docker.com)"
   tmp="$(mktemp)"

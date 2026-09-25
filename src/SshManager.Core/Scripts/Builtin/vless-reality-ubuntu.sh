@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# @name VLESS REALITY (Xray в Docker) — Ubuntu
-# @name_en VLESS REALITY (Xray in Docker) — Ubuntu
+# @name VLESS REALITY (Xray в Docker) — Ubuntu / CentOS
+# @name_en VLESS REALITY (Xray in Docker) — Ubuntu / CentOS
 # @group VPN
-# @os ubuntu
+# @os ubuntu,centos,rhel
 # @description Ставит Docker и Xray (VLESS + REALITY), открывает порт в firewall и выдаёт ссылку для клиента.
 # @description Повторный запуск генерирует новые ключи — ссылку в клиентах нужно обновить.
 # @description_en Installs Docker and Xray (VLESS + REALITY), opens the port in the firewall and returns a client link.
@@ -68,10 +68,26 @@ url_encode() {
   printf "%s" "$out"
 }
 
+# CentOS Stream, Rocky, AlmaLinux, RHEL (8 or newer): dnf instead of apt
+is_rhel(){
+  local ids=""
+  [[ -r /etc/os-release ]] && ids=" $(. /etc/os-release; echo "${ID:-} ${ID_LIKE:-}") "
+  [[ "$ids" == *" rhel "* || "$ids" == *" centos "* ]]
+}
+
 ensure_prereqs(){
   log "Ensuring prerequisites"
-  # minimal images may lack these; install only what is missing (the key is used as .asc, no gpg needed)
   local missing=() p
+  if is_rhel; then
+    cmd dnf || die "dnf not found (CentOS / RHEL 8 or newer is needed)"
+    for p in curl ca-certificates openssl iproute; do
+      rpm -q --whatprovides "$p" >/dev/null 2>&1 || missing+=("$p") # curl-minimal provides curl
+    done
+    (( ${#missing[@]} == 0 )) || dnf -y -q install "${missing[@]}"
+    return 0
+  fi
+  cmd apt-get || die "Ubuntu (apt) or CentOS / RHEL (dnf) is needed"
+  # minimal images may lack these; install only what is missing (the key is used as .asc, no gpg needed)
   for p in curl ca-certificates openssl iproute2; do
     dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "ok installed" || missing+=("$p")
   done
@@ -81,7 +97,19 @@ ensure_prereqs(){
   fi
 }
 
+install_docker_rhel() {
+  log "Installing Docker Engine + compose plugin"
+  local repo=centos
+  [[ "$(. /etc/os-release; echo "${ID:-}")" == rhel ]] && repo=rhel
+  [[ -f /etc/yum.repos.d/docker-ce.repo ]] ||
+    curl -fsSL "https://download.docker.com/linux/${repo}/docker-ce.repo" -o /etc/yum.repos.d/docker-ce.repo
+  # --allowerasing: Docker CE replaces podman-docker / runc when they are there
+  dnf -y -q install --allowerasing docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  systemctl enable --now docker
+}
+
 install_docker_ubuntu() {
+  if is_rhel; then install_docker_rhel; return; fi
   log "Installing Docker Engine + compose plugin"
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc

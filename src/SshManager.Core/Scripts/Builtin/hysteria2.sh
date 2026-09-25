@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# @name Hysteria 2 (Docker) — Ubuntu / Debian
-# @name_en Hysteria 2 (Docker) — Ubuntu / Debian
+# @name Hysteria 2 (Docker) — Ubuntu / Debian / CentOS
+# @name_en Hysteria 2 (Docker) — Ubuntu / Debian / CentOS
 # @group VPN
-# @os ubuntu,debian
+# @os ubuntu,debian,centos,rhel
 # @description Ставит Docker и официальный сервер Hysteria 2 (QUIC поверх UDP): быстрый на плохих каналах, маскируется под HTTP/3-сайт.
 # @description self-signed — домен не нужен, сертификат создаётся на сервере и закрепляется в ссылке (pinSHA256);
 # @description acme — свой домен и сертификат Let's Encrypt (нужен свободный TCP-порт 80). Открывает UDP-порт в firewall.
@@ -62,22 +62,53 @@ url_encode(){
 
 require_root(){ [[ "${EUID}" -eq 0 ]] || die "Run as root: sudo bash $0"; }
 
-# Ubuntu, Debian or a derivative; sets DOCKER_REPO / DOCKER_CODENAME for download.docker.com
-require_debian_family(){
+# Ubuntu, Debian, CentOS Stream, Rocky, AlmaLinux, RHEL (8 or newer) or a derivative. Sets OS_FAMILY (debian | rhel),
+# OS_MAJOR and DOCKER_REPO / DOCKER_CODENAME for download.docker.com
+require_os(){
   [[ -r /etc/os-release ]] || die "/etc/os-release not found"
   . /etc/os-release
+  OS_MAJOR="${VERSION_ID:-0}"; OS_MAJOR="${OS_MAJOR%%.*}"
   case " ${ID:-} ${ID_LIKE:-} " in
-    *" ubuntu "*) DOCKER_REPO=ubuntu; DOCKER_CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}" ;;
-    *" debian "*) DOCKER_REPO=debian; DOCKER_CODENAME="${VERSION_CODENAME:-}" ;;
-    *) die "Ubuntu or Debian is required (found ${PRETTY_NAME:-unknown})" ;;
+    *" ubuntu "*) OS_FAMILY=debian; DOCKER_REPO=ubuntu; DOCKER_CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}" ;;
+    *" debian "*) OS_FAMILY=debian; DOCKER_REPO=debian; DOCKER_CODENAME="${VERSION_CODENAME:-}" ;;
+    *" rhel "* | *" centos "*)
+      OS_FAMILY=rhel; DOCKER_CODENAME=""
+      if [[ "${ID:-}" == rhel ]]; then DOCKER_REPO=rhel; else DOCKER_REPO=centos; fi
+      [[ "$OS_MAJOR" =~ ^[0-9]+$ ]] && (( OS_MAJOR >= 8 )) || die "CentOS / RHEL 8 or newer is required (found ${PRETTY_NAME:-unknown})" ;;
+    *) die "Ubuntu, Debian or CentOS / Rocky / AlmaLinux / RHEL is required (found ${PRETTY_NAME:-unknown})" ;;
   esac
-  cmd apt-get || die "apt-get not found"
+  if [[ "$OS_FAMILY" == debian ]]; then cmd apt-get || die "apt-get not found"; else cmd dnf || die "dnf not found"; fi
   echo "OS: ${PRETTY_NAME:-$ID}"
 }
 
+# EPEL (Extra Packages for Enterprise Linux) with CodeReady Builder, which some of its packages need
+enable_epel(){
+  rpm -q epel-release >/dev/null 2>&1 && return 0
+  log "Enabling EPEL"
+  dnf -y -q install epel-release >/dev/null 2>&1 ||
+    dnf -y -q install "https://dl.fedoraproject.org/pub/epel/epel-release-latest-${OS_MAJOR}.noarch.rpm" || die "Could not enable EPEL"
+  if cmd crb; then crb enable >/dev/null 2>&1 || true
+  else dnf config-manager --set-enabled crb >/dev/null 2>&1 || dnf config-manager --set-enabled powertools >/dev/null 2>&1 || true
+  fi
+}
+
 APT_UPDATED=0
-apt_install(){ # installs the packages that are missing
+# Installs the packages that are missing. Names are Debian's; on CentOS / RHEL they are mapped (iproute2 = iproute)
+# and a package missing from the base repositories is taken from EPEL.
+pkg_install(){
   local missing=() p
+  if [[ "$OS_FAMILY" == rhel ]]; then
+    for p in "$@"; do
+      [[ "$p" == iproute2 ]] && p=iproute
+      rpm -q --whatprovides "$p" >/dev/null 2>&1 || missing+=("$p") # curl-minimal provides curl
+    done
+    (( ${#missing[@]} )) || return 0
+    echo "dnf: installing ${missing[*]}"
+    dnf -y -q install "${missing[@]}" 2>/dev/null && return 0
+    enable_epel
+    dnf -y -q install "${missing[@]}"
+    return
+  fi
   for p in "$@"; do
     dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "ok installed" || missing+=("$p")
   done
@@ -86,6 +117,8 @@ apt_install(){ # installs the packages that are missing
   echo "apt: installing ${missing[*]}"
   apt-get -o DPkg::Lock::Timeout=300 -o Acquire::Retries=3 install -y -qq --no-install-recommends "${missing[@]}"
 }
+
+pkg_installed(){ if [[ "$OS_FAMILY" == rhel ]]; then rpm -q "$1" >/dev/null 2>&1; else dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "ok installed"; fi; }
 
 # docker pull with retries: registries time out now and then
 pull(){
@@ -115,9 +148,15 @@ ensure_docker(){
     systemctl enable --now docker >/dev/null 2>&1 || true
     return 0
   fi
-  if cmd docker; then
+  if [[ "$OS_FAMILY" == rhel ]]; then
+    # also when "docker" is podman-docker: Docker CE replaces it and podman's runc/buildah (--allowerasing)
+    log "Installing Docker Engine + compose plugin (download.docker.com)"
+    [[ -f /etc/yum.repos.d/docker-ce.repo ]] ||
+      curl -fsSL "https://download.docker.com/linux/${DOCKER_REPO}/docker-ce.repo" -o /etc/yum.repos.d/docker-ce.repo
+    dnf -y -q install --allowerasing docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  elif cmd docker; then
     log "Docker is installed without the compose plugin: adding it"
-    apt_install docker-compose-plugin 2>/dev/null || apt_install docker-compose-v2 || die "Install the docker compose plugin and run again"
+    pkg_install docker-compose-plugin 2>/dev/null || pkg_install docker-compose-v2 || die "Install the docker compose plugin and run again"
   else
     log "Installing Docker Engine + compose plugin (download.docker.com)"
     [[ -n "${DOCKER_CODENAME}" ]] || die "Unknown distribution codename"
@@ -127,7 +166,7 @@ ensure_docker(){
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${DOCKER_REPO} ${DOCKER_CODENAME} stable" \
       > /etc/apt/sources.list.d/docker.list
     APT_UPDATED=0
-    apt_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
   fi
   systemctl enable --now docker >/dev/null 2>&1 || service docker start >/dev/null 2>&1 || true
   docker compose version >/dev/null 2>&1 || die "docker compose is not available"
@@ -287,7 +326,8 @@ make_cert(){
 }
 
 tune_udp(){
-  # bigger UDP buffers, as the Hysteria docs recommend for QUIC
+  # bigger UDP buffers, as the Hysteria docs recommend for QUIC (minimal images may lack the folder)
+  install -d -m 0755 /etc/sysctl.d
   cat > /etc/sysctl.d/99-hysteria.conf <<'EOF'
 net.core.rmem_max=16777216
 net.core.wmem_max=16777216
@@ -372,7 +412,7 @@ start(){
 
 main(){
   require_root
-  require_debian_family
+  require_os
 
   HY2_PORT="$(trim "${HY2_PORT:-443}")"
   HY2_TLS="$(trim "${HY2_TLS:-self-signed}")"; HY2_TLS="${HY2_TLS,,}"
@@ -395,7 +435,7 @@ main(){
     valid_domain "$HY2_SNI" || die "Invalid certificate name: $HY2_SNI"
   fi
 
-  apt_install ca-certificates curl openssl iproute2
+  pkg_install ca-certificates curl openssl iproute2
   ensure_docker
   install -d -m 0700 "$DIR" "$DIR/certs" "$DIR/acme"
 

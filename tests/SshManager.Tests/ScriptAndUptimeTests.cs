@@ -145,6 +145,14 @@ public class ScriptManifestTests
         Assert.False(new ScriptEntry { OsFilter = "ubuntu:22.04" }.Matches(ubuntu));
         Assert.True(new ScriptEntry { OsFilter = "" }.Matches(null));
         Assert.False(new ScriptEntry { OsFilter = "ubuntu" }.Matches(null));
+
+        // the CentOS / RHEL family by ID_LIKE, as their /etc/os-release has it
+        var el = new ScriptEntry { OsFilter = "ubuntu,debian,centos,rhel" };
+        Assert.True(el.Matches(new ServerFacts { OsId = "centos", OsLike = "rhel fedora", OsVersion = "9" }));
+        Assert.True(el.Matches(new ServerFacts { OsId = "rocky", OsLike = "rhel centos fedora", OsVersion = "9.4" }));
+        Assert.True(el.Matches(new ServerFacts { OsId = "almalinux", OsLike = "rhel centos fedora", OsVersion = "9.4" }));
+        Assert.True(el.Matches(new ServerFacts { OsId = "rhel", OsLike = "fedora", OsVersion = "9.4" }));
+        Assert.False(el.Matches(new ServerFacts { OsId = "fedora", OsVersion = "40" }));
     }
 }
 
@@ -306,7 +314,7 @@ public class BuiltinScriptTests
     [InlineData("nextcloud", "Cloud", "NC_URL")]
     [InlineData("seafile", "Cloud", "SF_URL")]
     [InlineData("filebrowser", "Cloud", "FB_URL")]
-    public void Ubuntu_Debian_Builtins_Have_Metadata(string id, string group, string mainResult)
+    public void Ubuntu_Debian_CentOS_Builtins_Have_Metadata(string id, string group, string mainResult)
     {
         var b = BuiltinScripts.All.Single(x => x.Id == id);
         var m = b.Manifest;
@@ -314,7 +322,7 @@ public class BuiltinScriptTests
         Assert.StartsWith("#!/usr/bin/env bash\n", b.Body);
         Assert.DoesNotContain("\r", b.Body);
         Assert.DoesNotContain("#@@", b.Body); // shared helpers were spliced in
-        Assert.Equal("ubuntu,debian", m.Os);
+        Assert.Equal("ubuntu,debian,centos,rhel", m.Os);
         Assert.Equal(group, m.Group);
         Assert.False(string.IsNullOrWhiteSpace(m.Name));
         Assert.False(string.IsNullOrWhiteSpace(m.Description));
@@ -324,7 +332,8 @@ public class BuiltinScriptTests
         foreach (var p in m.Params) Assert.Contains(p.Name, code);
         foreach (var r in m.Results)
             Assert.Contains(r.IsPattern ? $"sshm_result \"{r.Name[..^1]}" : $"sshm_result {r.Name} ", code);
-        Assert.Contains("require_debian_family", code);
+        Assert.Contains("require_os", code);
+        Assert.DoesNotContain("apt_install", code); // pkg_install: apt or dnf
         // docker compose prefers the environment over .env, and the parameters are exported: a ${NAME} in a generated
         // compose file (\${NAME} in the script) named like a parameter would take the raw parameter value instead
         foreach (System.Text.RegularExpressions.Match x in System.Text.RegularExpressions.Regex.Matches(code, @"\\\$\{([A-Za-z_][A-Za-z0-9_]*)\}"))

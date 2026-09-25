@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-  Test servers for SSH Manager install scripts: Ubuntu 24.04 and Debian 12 (with -Extra also Ubuntu 22.04 and Debian 13),
+  Test servers for SSH Manager install scripts: Ubuntu 24.04, Debian 12 and CentOS Stream 9
+  (with -Extra also Ubuntu 22.04, Debian 13 and Rocky Linux 9),
   each with systemd, sshd and its own Docker.
 
 .EXAMPLE
@@ -8,7 +9,7 @@
   .\lab.ps1 test                    # all VPN / web / File Browser checks on every running server
   .\lab.ps1 test vless,hysteria2    # only these scripts
   .\lab.ps1 test -Heavy             # also Nextcloud and Seafile (several GB of images, 10+ minutes)
-  .\lab.ps1 up -Extra               # add Ubuntu 22.04 and Debian 13
+  .\lab.ps1 up -Extra               # add Ubuntu 22.04, Debian 13 and Rocky Linux 9
   .\lab.ps1 reset                   # throw the servers away and start clean ones
   .\lab.ps1 down                    # stop and remove everything, volumes included
 #>
@@ -22,7 +23,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 $repo = Resolve-Path "$PSScriptRoot\..\.."
 $profileArgs = if ($Extra) { @('--profile', 'extra') } else { @() }
-$servers = [ordered]@{ ubuntu = 2201; debian = 2202; ubuntu22 = 2203; debian13 = 2204 }
+$servers = [ordered]@{ ubuntu = 2201; debian = 2202; centos = 2205; ubuntu22 = 2203; debian13 = 2204; rocky = 2206 }
 
 function Running {
     $names = docker ps --format '{{.Names}}'
@@ -35,7 +36,7 @@ function Show-Servers {
     foreach ($name in Running) {
         Write-Host ("  lab-{0,-9} 127.0.0.1 port {1}   root / lab-root   (sudo user: lab / lab-user)" -f $name, $servers[$name])
     }
-    Write-Host 'Ports on this PC: ubuntu 18001-18004, debian 18011-18014 -> 8080, 8081, 8000, 80 inside (see compose.yml)'
+    Write-Host 'Ports on this PC: ubuntu 18001-18004, debian 18011-18014, centos 18021-18024 -> 8080, 8081, 8000, 80 inside (see compose.yml)'
 }
 
 switch ($Command) {

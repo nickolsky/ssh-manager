@@ -10,7 +10,7 @@ using Xunit.Abstractions;
 namespace SshManager.Tests;
 
 /// <summary>
-/// Built-in install scripts on real Ubuntu / Debian servers (tools/script-lab: systemd + sshd + Docker, or real VPSes),
+/// Built-in install scripts on real Ubuntu / Debian / CentOS servers (tools/script-lab: systemd + sshd + Docker, or real VPSes),
 /// run the way the app runs them, then checked with a real client: VPN links carry traffic, sites answer, logins work.
 /// Enable with SSHM_LAB="ubuntu=127.0.0.1:2201:root:lab-root;debian=127.0.0.1:2202:root:lab-root".
 /// SSHM_LAB_ONLY=vless,hysteria2 limits the scripts; SSHM_LAB_HEAVY=1 adds Nextcloud and Seafile (several GB of images).
@@ -123,11 +123,12 @@ public partial class LabTests(ITestOutputHelper log)
 
     // ---------- VPN ----------
 
-    /// <summary>The VLESS script for the server's OS: the Ubuntu one, or the Debian 12 one (other releases are skipped).</summary>
+    /// <summary>The VLESS script for the server's OS: the Ubuntu / CentOS one, or the Debian 12 one (other releases are skipped).</summary>
     private static string? VlessScriptFor(Lab lab)
     {
-        var os = Sh(lab, ". /etc/os-release; echo \"$ID $VERSION_ID\"").Trim();
-        return os.StartsWith("ubuntu ") ? "vless-reality-ubuntu" : os == "debian 12" ? "vless-reality-debian12" : null;
+        var os = Sh(lab, ". /etc/os-release; echo \"$ID $VERSION_ID $ID_LIKE\"").Trim();
+        if (os.StartsWith("ubuntu ") || os.Contains(" rhel") || os.Contains(" centos")) return "vless-reality-ubuntu";
+        return os.StartsWith("debian 12 ") || os == "debian 12" ? "vless-reality-debian12" : null;
     }
 
     [Fact]
@@ -297,9 +298,9 @@ public partial class LabTests(ITestOutputHelper log)
         await OnEachServer(lab =>
         {
             // noninteractive: without it cron's recommended mail server asks questions on the console and hangs
-            Sh(lab, "export DEBIAN_FRONTEND=noninteractive; command -v crontab >/dev/null || (apt-get -o DPkg::Lock::Timeout=300 update -qq && " +
-                    "apt-get install -y -qq --no-install-recommends cron) >/dev/null 2>&1; " +
-                    "systemctl start cron 2>/dev/null; " +
+            Sh(lab, "export DEBIAN_FRONTEND=noninteractive; command -v crontab >/dev/null || if command -v dnf >/dev/null; then dnf -y -q install cronie; " +
+                    "else apt-get -o DPkg::Lock::Timeout=300 update -qq && apt-get install -y -qq --no-install-recommends cron; fi >/dev/null 2>&1; " +
+                    "systemctl start cron 2>/dev/null || systemctl start crond 2>/dev/null; " +
                     "(crontab -l 2>/dev/null | grep -v sshm-lab; echo '*/7 * * * * /bin/echo sshm-lab-root  # sshm-lab') | crontab - && " +
                     "id lab >/dev/null 2>&1 && echo '@daily /bin/true sshm-lab-user' | crontab -u lab - ; " +
                     "printf 'SHELL=/bin/sh\\n15 4 * * 1 nobody /bin/echo sshm-lab-file\\n' > /etc/cron.d/sshm-lab");

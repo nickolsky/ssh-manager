@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# @name Статический сайт (nginx, без Docker) — Ubuntu / Debian
-# @name_en Static website (nginx, no Docker) — Ubuntu / Debian
+# @name Статический сайт (nginx, без Docker) — Ubuntu / Debian / CentOS
+# @name_en Static website (nginx, no Docker) — Ubuntu / Debian / CentOS
 # @group Web
-# @os ubuntu,debian
+# @os ubuntu,debian,centos,rhel
 # @description Ставит nginx из репозитория дистрибутива и публикует папку /var/www/sshm-site со страницей-заглушкой.
 # @description С доменом можно сразу включить HTTPS: сертификат Let's Encrypt через certbot, продление — таймером certbot.
 # @description Свои файлы загрузите в /var/www/sshm-site через «Файлы». Повторный запуск не трогает index.html (если не отмечено).
@@ -54,22 +54,53 @@ url_encode(){
 
 require_root(){ [[ "${EUID}" -eq 0 ]] || die "Run as root: sudo bash $0"; }
 
-# Ubuntu, Debian or a derivative; sets DOCKER_REPO / DOCKER_CODENAME for download.docker.com
-require_debian_family(){
+# Ubuntu, Debian, CentOS Stream, Rocky, AlmaLinux, RHEL (8 or newer) or a derivative. Sets OS_FAMILY (debian | rhel),
+# OS_MAJOR and DOCKER_REPO / DOCKER_CODENAME for download.docker.com
+require_os(){
   [[ -r /etc/os-release ]] || die "/etc/os-release not found"
   . /etc/os-release
+  OS_MAJOR="${VERSION_ID:-0}"; OS_MAJOR="${OS_MAJOR%%.*}"
   case " ${ID:-} ${ID_LIKE:-} " in
-    *" ubuntu "*) DOCKER_REPO=ubuntu; DOCKER_CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}" ;;
-    *" debian "*) DOCKER_REPO=debian; DOCKER_CODENAME="${VERSION_CODENAME:-}" ;;
-    *) die "Ubuntu or Debian is required (found ${PRETTY_NAME:-unknown})" ;;
+    *" ubuntu "*) OS_FAMILY=debian; DOCKER_REPO=ubuntu; DOCKER_CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}" ;;
+    *" debian "*) OS_FAMILY=debian; DOCKER_REPO=debian; DOCKER_CODENAME="${VERSION_CODENAME:-}" ;;
+    *" rhel "* | *" centos "*)
+      OS_FAMILY=rhel; DOCKER_CODENAME=""
+      if [[ "${ID:-}" == rhel ]]; then DOCKER_REPO=rhel; else DOCKER_REPO=centos; fi
+      [[ "$OS_MAJOR" =~ ^[0-9]+$ ]] && (( OS_MAJOR >= 8 )) || die "CentOS / RHEL 8 or newer is required (found ${PRETTY_NAME:-unknown})" ;;
+    *) die "Ubuntu, Debian or CentOS / Rocky / AlmaLinux / RHEL is required (found ${PRETTY_NAME:-unknown})" ;;
   esac
-  cmd apt-get || die "apt-get not found"
+  if [[ "$OS_FAMILY" == debian ]]; then cmd apt-get || die "apt-get not found"; else cmd dnf || die "dnf not found"; fi
   echo "OS: ${PRETTY_NAME:-$ID}"
 }
 
+# EPEL (Extra Packages for Enterprise Linux) with CodeReady Builder, which some of its packages need
+enable_epel(){
+  rpm -q epel-release >/dev/null 2>&1 && return 0
+  log "Enabling EPEL"
+  dnf -y -q install epel-release >/dev/null 2>&1 ||
+    dnf -y -q install "https://dl.fedoraproject.org/pub/epel/epel-release-latest-${OS_MAJOR}.noarch.rpm" || die "Could not enable EPEL"
+  if cmd crb; then crb enable >/dev/null 2>&1 || true
+  else dnf config-manager --set-enabled crb >/dev/null 2>&1 || dnf config-manager --set-enabled powertools >/dev/null 2>&1 || true
+  fi
+}
+
 APT_UPDATED=0
-apt_install(){ # installs the packages that are missing
+# Installs the packages that are missing. Names are Debian's; on CentOS / RHEL they are mapped (iproute2 = iproute)
+# and a package missing from the base repositories is taken from EPEL.
+pkg_install(){
   local missing=() p
+  if [[ "$OS_FAMILY" == rhel ]]; then
+    for p in "$@"; do
+      [[ "$p" == iproute2 ]] && p=iproute
+      rpm -q --whatprovides "$p" >/dev/null 2>&1 || missing+=("$p") # curl-minimal provides curl
+    done
+    (( ${#missing[@]} )) || return 0
+    echo "dnf: installing ${missing[*]}"
+    dnf -y -q install "${missing[@]}" 2>/dev/null && return 0
+    enable_epel
+    dnf -y -q install "${missing[@]}"
+    return
+  fi
   for p in "$@"; do
     dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "ok installed" || missing+=("$p")
   done
@@ -78,6 +109,8 @@ apt_install(){ # installs the packages that are missing
   echo "apt: installing ${missing[*]}"
   apt-get -o DPkg::Lock::Timeout=300 -o Acquire::Retries=3 install -y -qq --no-install-recommends "${missing[@]}"
 }
+
+pkg_installed(){ if [[ "$OS_FAMILY" == rhel ]]; then rpm -q "$1" >/dev/null 2>&1; else dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "ok installed"; fi; }
 
 # docker pull with retries: registries time out now and then
 pull(){
@@ -107,9 +140,15 @@ ensure_docker(){
     systemctl enable --now docker >/dev/null 2>&1 || true
     return 0
   fi
-  if cmd docker; then
+  if [[ "$OS_FAMILY" == rhel ]]; then
+    # also when "docker" is podman-docker: Docker CE replaces it and podman's runc/buildah (--allowerasing)
+    log "Installing Docker Engine + compose plugin (download.docker.com)"
+    [[ -f /etc/yum.repos.d/docker-ce.repo ]] ||
+      curl -fsSL "https://download.docker.com/linux/${DOCKER_REPO}/docker-ce.repo" -o /etc/yum.repos.d/docker-ce.repo
+    dnf -y -q install --allowerasing docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  elif cmd docker; then
     log "Docker is installed without the compose plugin: adding it"
-    apt_install docker-compose-plugin 2>/dev/null || apt_install docker-compose-v2 || die "Install the docker compose plugin and run again"
+    pkg_install docker-compose-plugin 2>/dev/null || pkg_install docker-compose-v2 || die "Install the docker compose plugin and run again"
   else
     log "Installing Docker Engine + compose plugin (download.docker.com)"
     [[ -n "${DOCKER_CODENAME}" ]] || die "Unknown distribution codename"
@@ -119,7 +158,7 @@ ensure_docker(){
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${DOCKER_REPO} ${DOCKER_CODENAME} stable" \
       > /etc/apt/sources.list.d/docker.list
     APT_UPDATED=0
-    apt_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
   fi
   systemctl enable --now docker >/dev/null 2>&1 || service docker start >/dev/null 2>&1 || true
   docker compose version >/dev/null 2>&1 || die "docker compose is not available"
@@ -308,17 +347,56 @@ require_port_for_nginx(){
   [[ -z "$owner" || "$owner" == *'"nginx"'* ]] || die "Port $1 is already in use: ${owner}. Choose another port or stop that service."
 }
 
+# CentOS / RHEL: nginx.conf has its own default server on port 80 inside http {}. When that port belongs to
+# another program nginx would not start, so that server block is commented out (once; nginx.conf.sshm-orig keeps the original).
+disable_el_default_server(){
+  local conf=/etc/nginx/nginx.conf
+  grep -q '^# sshm: default server disabled' "$conf" && return 0
+  awk '
+    {
+      code = $0; sub(/#.*/, "", code)
+      opens = gsub(/\{/, "{", code); closes = gsub(/\}/, "}", code)
+      if (!done && !skip && depth == 1 && code ~ /^[[:space:]]*server[[:space:]]*\{/) {
+        skip = 1; print "# sshm: default server disabled (port 80 is used by another program)"
+      }
+      if (skip) print "#" $0; else print
+      depth += opens - closes
+      if (skip && depth == 1) { skip = 0; done = 1 }
+    }' "$conf" > "$conf.sshm-new"
+  cp -n "$conf" "$conf.sshm-orig"
+  mv "$conf.sshm-new" "$conf"
+  echo "Port 80 is busy: the default server in $conf is commented out"
+}
+
+# SELinux (CentOS / RHEL): the site folder gets the web content label, a non-standard port the http_port_t type
+selinux_for_nginx(){
+  cmd getenforce && [[ "$(getenforce 2>/dev/null)" != Disabled ]] || return 0
+  restorecon -R /var/www >/dev/null 2>&1 || true
+  pkg_install policycoreutils-python-utils
+  if ! semanage port -l 2>/dev/null | awk '$1 == "http_port_t"' | grep -Eq "[ ,]${SITE_PORT}(,|$)"; then
+    semanage port -a -t http_port_t -p tcp "$SITE_PORT" 2>/dev/null || semanage port -m -t http_port_t -p tcp "$SITE_PORT" ||
+      warn "SELinux: could not allow nginx on port ${SITE_PORT}"
+    echo "SELinux: nginx may listen on port ${SITE_PORT}"
+  fi
+}
+
 # nginx starts right after installing with the default site on port 80; when that port is taken
 # (e.g. by a Docker web server) the start would fail the installation, so it is held back
 install_nginx(){
-  dpkg-query -W -f='${Status}' nginx 2>/dev/null | grep -q "ok installed" && return 0
+  if [[ "$OS_FAMILY" == rhel ]]; then
+    pkg_install nginx # not started on install here
+    local owner; owner="$(port_owner 80 tcp)"
+    if [[ -n "$owner" && "$owner" != *'"nginx"'* ]]; then disable_el_default_server; fi
+    return 0
+  fi
+  pkg_installed nginx && return 0
   local hold=0
   if [[ -n "$(port_owner 80 tcp)" && ! -e /usr/sbin/policy-rc.d ]]; then
     hold=1
     printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d
     chmod 755 /usr/sbin/policy-rc.d
   fi
-  apt_install nginx || { (( ! hold )) || rm -f /usr/sbin/policy-rc.d; die "Could not install nginx"; }
+  pkg_install nginx || { (( ! hold )) || rm -f /usr/sbin/policy-rc.d; die "Could not install nginx"; }
   if (( hold )); then
     rm -f /usr/sbin/policy-rc.d /etc/nginx/sites-enabled/default
     echo "Port 80 is busy: the default nginx site is disabled"
@@ -344,32 +422,37 @@ write_nginx(){
     echo "    }"
     echo "}"
   } > "$CONF"
-  ln -sf "$CONF" /etc/nginx/sites-enabled/sshm-site.conf
-  # the distribution's default site also claims default_server on port 80
-  if [[ -z "$SITE_DOMAIN" && "$SITE_PORT" == 80 && -L /etc/nginx/sites-enabled/default ]]; then
-    echo "Disabling the default nginx site (it is kept in sites-available)"
-    rm -f /etc/nginx/sites-enabled/default
+  if [[ "$OS_FAMILY" == debian ]]; then
+    ln -sf "$CONF" /etc/nginx/sites-enabled/sshm-site.conf
+    # the distribution's default site also claims default_server on port 80
+    if [[ -z "$SITE_DOMAIN" && "$SITE_PORT" == 80 && -L /etc/nginx/sites-enabled/default ]]; then
+      echo "Disabling the default nginx site (it is kept in sites-available)"
+      rm -f /etc/nginx/sites-enabled/default
+    fi
+  else
+    selinux_for_nginx
   fi
   nginx -t 2>&1 || die "nginx rejected the configuration"
   systemctl enable --now nginx >/dev/null 2>&1 || true
-  systemctl reload nginx
+  systemctl reload nginx || systemctl restart nginx
 }
 
 enable_https(){
   log "Getting a Let's Encrypt certificate for ${SITE_DOMAIN}"
-  apt_install certbot python3-certbot-nginx
+  pkg_install certbot python3-certbot-nginx # EPEL on CentOS / RHEL
   local email=(--register-unsafely-without-email)
   [[ -z "$ACME_EMAIL" ]] || email=(-m "$ACME_EMAIL")
   open_port 443 tcp
   require_port_for_nginx 443
   certbot --nginx -d "$SITE_DOMAIN" --non-interactive --agree-tos "${email[@]}" --keep-until-expiring --redirect ||
     die "certbot failed: check that ${SITE_DOMAIN} points to this server and ports 80/443 are reachable from the internet"
-  systemctl enable --now certbot.timer >/dev/null 2>&1 || true
+  systemctl enable --now certbot.timer >/dev/null 2>&1 || systemctl enable --now certbot-renew.timer >/dev/null 2>&1 || true
 }
 
 main(){
   require_root
-  require_debian_family
+  require_os
+  [[ "$OS_FAMILY" == debian ]] || CONF=/etc/nginx/conf.d/sshm-site.conf
 
   SITE_DOMAIN="$(trim "${SITE_DOMAIN:-}")"; SITE_DOMAIN="${SITE_DOMAIN,,}"
   SITE_PORT="$(trim "${SITE_PORT:-80}")"
@@ -384,7 +467,7 @@ main(){
     [[ "$SITE_PORT" == 80 ]] || die "HTTPS needs the HTTP port to be 80 (Let's Encrypt checks it)"
   fi
 
-  apt_install ca-certificates curl openssl iproute2
+  pkg_install ca-certificates curl openssl iproute2
   require_port_for_nginx "$SITE_PORT"
   [[ "$SITE_HTTPS" != 1 ]] || check_dns "$SITE_DOMAIN"
   install_nginx

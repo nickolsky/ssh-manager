@@ -74,7 +74,7 @@
 
   | Группа | Скрипт | Что получается |
   |---|---|---|
-  | VPN | **VLESS REALITY** (Xray в Docker) — Ubuntu; Debian 12 с маленьким диском | ссылка `vless://…`, порт на мониторинге |
+  | VPN | **VLESS REALITY** (Xray в Docker) — Ubuntu и CentOS; Debian 12 с маленьким диском | ссылка `vless://…`, порт на мониторинге |
   | VPN | **Hysteria 2** (официальный образ): самоподписанный сертификат с pinSHA256 или Let's Encrypt, obfs Salamander | ссылка `hysteria2://…` |
   | VPN | **AmneziaWG** (официальный `amneziavpn/amneziawg-go`, без модуля ядра, от 512 МБ памяти); клиенты по именам: `phone,laptop` | ключ `vpn://` для Amnezia VPN на каждого клиента, QR-код конфига (AmneziaWG и Amnezia VPN), `.conf` в `/opt/amneziawg/clients` |
   | Веб-сервер | **Статический сайт — nginx без Docker**, HTTPS через certbot | папка `/var/www/sshm-site` |
@@ -84,8 +84,10 @@
   | Облачные хранилища | **File Browser** — веб-доступ к папке, от 256 МБ памяти | адрес, логин и пароль администратора |
   | — | **Docker Engine + Compose**, **Uptime Kuma** (Docker Compose) | версии / адрес |
 
-  Новые скрипты — для Ubuntu 22.04+ и Debian 12+ (проверяются на тестовом стенде), повторный запуск сохраняет ключи, пароли и данные
-  (ссылки не меняются), порты открываются только в уже включённом firewall. Для Nextcloud и Seafile на серверах
+  Новые скрипты — для Ubuntu 22.04+, Debian 12+ и CentOS Stream / Rocky / AlmaLinux / RHEL 8+ (проверяются на тестовом
+  стенде). На CentOS пакеты ставятся через dnf (чего нет в основных репозиториях — из EPEL), Docker — из репозитория
+  download.docker.com, для nginx настраивается SELinux. Повторный запуск сохраняет ключи, пароли и данные
+  (ссылки не меняются), порты открываются только в уже включённом firewall (ufw, firewalld или iptables). Для Nextcloud и Seafile на серверах
   с памятью меньше 2 ГБ создаётся swap. VLESS REALITY взят из
   [vless_docker_install_scripts](https://github.com/nickolsky/vless_docker_install_scripts). Как проверить скрипты
   на тестовых серверах — [tools/script-lab](tools/script-lab/README.md).
