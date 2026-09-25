@@ -8,6 +8,7 @@ using Microsoft.Win32;
 using SshManager.Core;
 using SshManager.Core.Backup;
 using SshManager.Core.Crypto;
+using SshManager.Core.Forwarding;
 using SshManager.Core.Inventory;
 using SshManager.Core.Models;
 using SshManager.Core.Monitoring;
@@ -77,6 +78,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         AgentLogCommand = new RelayCommand(OpenAgentLog);
         SetMonitorIntervalCommand = new RelayCommand(p => SetMonitorInterval(p is int m ? m : null), _ => HasServer());
         PortForwardsCommand = new RelayCommand(OpenPortForwards, HasServer);
+        GoToForwardPeerCommand = new RelayCommand(GoToForwardPeer, () => SelectedNode is ForwardNode { Peer: not null });
         PortMonitorCommand = new RelayCommand(OpenPortMonitor, HasServer);
         TogglePortCommand = new RelayCommand(TogglePort, () => SelectedNode is PortNode { CanMonitor: true });
         RunScriptCommand = new RelayCommand(p => RunScript(p as ScriptEntry), _ => HasServer());
@@ -166,6 +168,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(SelectionKind));
             OnPropertyChanged(nameof(SelectedAttributeHasQr));
             OnPropertyChanged(nameof(SelectedCronKind));
+            OnPropertyChanged(nameof(ForwardPeerHeader));
             OnPropertyChanged(nameof(IsRestartNo));
             OnPropertyChanged(nameof(IsRestartUnlessStopped));
             OnPropertyChanged(nameof(IsRestartAlways));
@@ -273,6 +276,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ICommand SetMcpAccessCommand { get; }
     public ICommand AgentLogCommand { get; }
     public ICommand PortForwardsCommand { get; }
+    public ICommand GoToForwardPeerCommand { get; }
+
+    /// <summary>"Go to «B»" for the selected forward: its target, or the server an incoming one comes from.</summary>
+    public string ForwardPeerHeader => _selectedNode is ForwardNode n
+        ? n.Peer is { } p ? L.F(n.Forward == null ? "Ctx.GoToSource" : "Ctx.GoToTarget", p.Name) : L.Get("Ctx.GoToUnknown")
+        : "";
     public ICommand PortMonitorCommand { get; }
     public ICommand TogglePortCommand { get; }
     public ICommand RunScriptCommand { get; }
@@ -574,8 +583,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public string TargetName(string ip) => _serversByIp.TryGetValue(ip, out var s) ? s.Name : ip;
 
-    public string DescribeForward(PortForward p) =>
-        $"{p.Protocol} {p.ListenPort} → {TargetName(p.TargetIp)}:{p.EffectiveTargetPort}";
+    public ServerEntry? ServerByIp(string ip) => _serversByIp.GetValueOrDefault(ip);
+
+    /// <summary>The whole chain the forward is part of: who forwards into it, this server, every following hop.</summary>
+    public List<ForwardPoint> ForwardChain(ServerEntry from, PortForward f) =>
+        _host.Vault.IsUnlocked ? ForwardChains.Full(from, f, _host.Vault.Data.Servers, ServerByIp) : ForwardChains.Downstream(from, f, ServerByIp);
+
+    /// <summary>"tcp 443 → B:8443", and the following hops when the target forwards it on: "→ C:443 → D:443".</summary>
+    public string DescribeForward(ServerEntry from, PortForward p)
+    {
+        var hops = ForwardChains.Downstream(from, p, ServerByIp).Skip(1).ToList();
+        var text = $"{p.Protocol} {p.ListenPort} → " + string.Join(" → ", hops.Select(h => h.Label));
+        return hops.Count > 0 && hops[^1].Listener is { } l ? $"{text} ({l})" : text;
+    }
 
     public IEnumerable<(ServerEntry From, PortForward Forward)> IncomingForwards(ServerEntry target)
     {
@@ -591,7 +611,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public IEnumerable<string> ForwardSummary(ServerEntry s)
     {
-        foreach (var f in s.Facts?.Forwards ?? []) yield return DescribeForward(f);
+        foreach (var f in s.Facts?.Forwards ?? []) yield return DescribeForward(s, f);
         foreach (var (from, f) in IncomingForwards(s)) yield return $"← {from.Name} ({f.Protocol} {f.ListenPort})";
     }
 
@@ -862,6 +882,34 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         if (SelectedServer == null) return;
         new PortForwardWindow(_host, SelectedServer.Entry.Clone(), this) { Owner = Owner }.Show();
+    }
+
+    /// <summary>
+    /// Jumps from a forward to the server at its other end: that server's forwards open, with the matching one selected
+    /// (where the traffic arrives, or goes on from), so a chain can be followed hop by hop.
+    /// </summary>
+    public void GoToForwardPeer()
+    {
+        if (SelectedNode is not ForwardNode { Peer: { } peer } from || from.Parent?.Parent is not ServerNode origin) return;
+        if (!_serverNodes.TryGetValue(peer.Id, out var node)) return;
+        for (var p = node.Parent; p != null; p = p.Parent) p.IsExpanded = true;
+        node.IsExpanded = true;
+        var section = node.Children.OfType<SectionNode>().FirstOrDefault(c => c.Key == "forwards");
+        TreeNode target = node;
+        if (section != null)
+        {
+            section.IsExpanded = true;
+            var nodes = section.Children.OfType<ForwardNode>().ToList();
+            target = from.Forward is { } f
+                // outgoing: the forward on the target that takes the traffic on, else the incoming line from here
+                ? nodes.FirstOrDefault(n => n.Forward != null && ForwardChains.Covers(n.Forward.ListenPort, f.EffectiveTargetPort) && n.Forward.Protocol == f.Protocol)
+                  ?? nodes.FirstOrDefault(n => n.Forward == null && n.Peer?.Id == origin.Entry.Id) ?? (TreeNode)node
+                // incoming: the forward on the source that sends it here
+                : nodes.FirstOrDefault(n => n.Forward != null && n.Peer?.Id == origin.Entry.Id) ?? (TreeNode)node;
+        }
+        target.IsSelected = true; // the tree follows once the expanded items exist
+        SelectedNode = target;
+        Status = L.F("Fwd.WentTo", peer.Name);
     }
 
     private void OpenPortMonitor()

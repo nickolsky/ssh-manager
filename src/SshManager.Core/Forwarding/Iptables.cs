@@ -109,14 +109,16 @@ public static partial class IptablesCommands
         return p.Split(':').All(x => int.TryParse(x, out var n) && n is >= 1 and <= 65535);
     }
 
-    public static string Add(string id, string protocol, string listenPort, string targetIp, string targetPort)
+    public static string Add(string id, string protocol, string listenPort, string targetIp, string targetPort) =>
+        "set -e\n" + AddBody(id, protocol, listenPort, targetIp, targetPort) + "\necho " + OkMarker + "\n" + Persist;
+
+    private static string AddBody(string id, string protocol, string listenPort, string targetIp, string targetPort)
     {
         Validate(protocol, listenPort, targetIp, targetPort);
         var tport = targetPort.Length == 0 ? listenPort : targetPort;
         var toDest = $"{targetIp}:{tport.Replace(':', '-')}";
         var c = $"-m comment --comment {PortForward.CommentPrefix}{id}";
         return $$"""
-            set -e
             command -v iptables >/dev/null 2>&1 || { echo 'iptables not found' >&2; exit 3; }
             [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = 1 ] || sysctl -w net.ipv4.ip_forward=1 >/dev/null
             mkdir -p /etc/sysctl.d && echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-sshm-forward.conf
@@ -124,31 +126,64 @@ public static partial class IptablesCommands
             iptables -t nat -A POSTROUTING -p {{protocol}} -d {{targetIp}} --dport {{tport}} {{c}} -j MASQUERADE
             iptables -I FORWARD 1 -p {{protocol}} -d {{targetIp}} --dport {{tport}} {{c}} -j ACCEPT
             iptables -I FORWARD 1 -p {{protocol}} -s {{targetIp}} --sport {{tport}} -m conntrack --ctstate ESTABLISHED,RELATED {{c}} -j ACCEPT
-            echo {{OkMarker}}
-            """ + "\n" + Persist;
+            """;
     }
 
     /// <summary>Managed forwards: every rule tagged with its id; external ones: just their DNAT rule.</summary>
-    public static string Remove(PortForward f)
+    public static string Remove(PortForward f) => "set -e\n" + RemoveBody(f) + "\necho " + OkMarker + "\n" + Persist;
+
+    private static string RemoveBody(PortForward f)
     {
-        string body;
-        if (f.ManagedId is { } id)
-        {
-            if (!IdRegex().IsMatch(id)) throw new ArgumentException(L.F("Fwd.BadId", id));
-            body = $$"""
-                for t in nat filter; do
-                  iptables -t "$t" -S | grep -E -- '--comment "?{{PortForward.CommentPrefix}}{{id}}"?( |$)' | sed 's/^-A /-D /' |
-                  while IFS= read -r rule; do eval "iptables -t $t $rule"; done
-                done
-                """;
-        }
+        if (f.ManagedId is { } id) return RemoveById(id);
+        if (f.Rule == null || !f.Rule.StartsWith("-A PREROUTING ", StringComparison.Ordinal) || f.Rule.Contains('\n'))
+            throw new ArgumentException(L.Get("Fwd.NoRule"));
+        return "eval \"iptables -t nat " + Escape("-D " + f.Rule[3..]) + "\"";
+    }
+
+    private static string RemoveById(string id)
+    {
+        if (!IdRegex().IsMatch(id)) throw new ArgumentException(L.F("Fwd.BadId", id));
+        return $$"""
+            for t in nat filter; do
+              iptables -t "$t" -S | grep -E -- '--comment "?{{PortForward.CommentPrefix}}{{id}}"?( |$)' | sed 's/^-A /-D /' |
+              while IFS= read -r rule; do eval "iptables -t $t $rule"; done
+            done
+            """;
+    }
+
+    private static string Escape(string s) => s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("$", "\\$").Replace("`", "\\`");
+
+    /// <summary>
+    /// Edits a forward in one go: removes <paramref name="old"/>, then adds the new one (one forward per protocol, each
+    /// with its own id). When adding fails, the partly added rules go and the old forward is put back.
+    /// </summary>
+    public static string Replace(PortForward old, IReadOnlyList<(string Id, string Protocol)> adds, string listenPort, string targetIp, string targetPort)
+    {
+        var add = string.Join("\n", adds.Select(a => AddBody(a.Id, a.Protocol, listenPort, targetIp, targetPort)));
+        var undo = string.Join("\n", adds.Select(a => RemoveById(a.Id)));
+        string restore;
+        if (old.ManagedId != null)
+            restore = AddBody(old.ManagedId, old.Protocol, old.ListenPort, old.TargetIp, old.TargetPort);
         else
-        {
-            if (f.Rule == null || !f.Rule.StartsWith("-A PREROUTING ", StringComparison.Ordinal) || f.Rule.Contains('\n'))
-                throw new ArgumentException(L.Get("Fwd.NoRule"));
-            body = "eval \"iptables -t nat " + ("-D " + f.Rule[3..]).Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("$", "\\$").Replace("`", "\\`") + "\"";
-        }
-        return "set -e\n" + body + "\necho " + OkMarker + "\n" + Persist;
+            restore = "eval \"iptables -t nat " + Escape(old.Rule!) + "\""; // RemoveBody checked it is one -A PREROUTING line
+        // the subshell runs as a plain command: inside "if ! ( … )" bash would ignore its set -e and go on after a failure
+        return $$"""
+            set -e
+            {{RemoveBody(old)}}
+            set +e
+            ( set -e
+            {{add}}
+            )
+            added=$?
+            if [ "$added" -ne 0 ]; then
+            {{undo}}
+            {{restore}}
+              echo 'The new forward could not be added; the old one is back' >&2
+              exit 5
+            fi
+            set -e
+            echo {{OkMarker}}
+            """ + "\n" + Persist;
     }
 
     [GeneratedRegex("^[0-9a-f]{1,32}$")]

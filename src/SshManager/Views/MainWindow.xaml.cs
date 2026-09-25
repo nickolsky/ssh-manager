@@ -373,6 +373,12 @@ public partial class MainWindow : Window
     private void OnTreeDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (e.OriginalSource is DependencyObject d && IsInside<System.Windows.Controls.Primitives.ToggleButton>(d)) return;
+        if (FindItem(e.OriginalSource as DependencyObject)?.DataContext is ForwardNode { Peer: not null } fwd && ReferenceEquals(_vm.SelectedNode, fwd))
+        {
+            _vm.GoToForwardPeer(); // like following a link
+            e.Handled = true;
+            return;
+        }
         if (FindItem(e.OriginalSource as DependencyObject)?.DataContext is not ServerNode node) return;
         if (!ReferenceEquals(_vm.SelectedNode, node)) return;
         _vm.Connect();

@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:l="clr-namespace:SshManager.Localization"
-        Title="{l:Tr Fwd.Title}" Width="820" Height="600" MinWidth="620" MinHeight="440"
+        Title="{l:Tr Fwd.Title}" Width="1120" Height="620" MinWidth="700" MinHeight="460"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
     <Grid Margin="20,14,20,18">
         <Grid.RowDefinitions>
@@ -17,20 +17,36 @@
         <TextBlock Grid.Row="1" Style="{StaticResource Hint}" Text="{l:Tr Fwd.Hint}" Margin="0,6,0,10" />
 
         <DataGrid Grid.Row="2" x:Name="ForwardsGrid" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
-                  HeadersVisibility="Column" GridLinesVisibility="None" CanUserAddRows="False">
+                  HeadersVisibility="Column" GridLinesVisibility="None" CanUserAddRows="False" MouseDoubleClick="OnRowDoubleClick">
             <DataGrid.Columns>
+                <DataGridTemplateColumn Header="{l:Tr Fwd.Monitor}" Width="120">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <CheckBox IsChecked="{Binding Monitored, Mode=OneWay}" IsEnabled="{Binding CanMonitor}" ToolTip="{Binding MonitorTip}"
+                                      ToolTipService.ShowOnDisabled="True" HorizontalAlignment="Center" MinWidth="0" Click="OnMonitorClick" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="{l:Tr Fwd.Protocol}" Binding="{Binding Protocol}" Width="80" />
-                <DataGridTextColumn Header="{l:Tr Fwd.ListenPort}" Binding="{Binding ListenPort}" Width="110" />
-                <DataGridTextColumn Header="{l:Tr Fwd.Target}" Binding="{Binding Target}" Width="260" />
-                <DataGridTextColumn Header="{l:Tr Fwd.Interface}" Binding="{Binding Interface}" Width="90" />
-                <DataGridTextColumn Header="{l:Tr Fwd.CreatedBy}" Binding="{Binding Owner}" Width="*" />
+                <DataGridTextColumn Header="{l:Tr Fwd.ListenPort}" Binding="{Binding ListenPort}" Width="100" />
+                <DataGridTextColumn Header="{l:Tr Fwd.Target}" Binding="{Binding Target}" Width="200" />
+                <DataGridTextColumn Header="{l:Tr Fwd.Chain}" Binding="{Binding Chain}" Width="*">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                            <Setter Property="ToolTip" Value="{Binding ChainTip}" />
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="{l:Tr Fwd.Interface}" Binding="{Binding Interface}" Width="80" />
+                <DataGridTextColumn Header="{l:Tr Fwd.CreatedBy}" Binding="{Binding Owner}" Width="100" />
             </DataGrid.Columns>
         </DataGrid>
 
         <Border Grid.Row="3" Margin="0,12,0,0" Padding="12,10" CornerRadius="6" BorderThickness="1"
                 BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
             <StackPanel>
-                <TextBlock Text="{l:Tr Fwd.AddTitle}" FontWeight="SemiBold" />
+                <TextBlock x:Name="FormTitle" Text="{l:Tr Fwd.AddTitle}" FontWeight="SemiBold" />
                 <Grid Margin="0,6,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="110" />
@@ -63,8 +79,10 @@
                         <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr Fwd.TargetPort}" Margin="0,0,0,4" />
                         <TextBox x:Name="TargetPortBox" ToolTip="{l:Tr Fwd.TargetPortTip}" />
                     </StackPanel>
-                    <Button Grid.Column="8" x:Name="AddButton" Content="{l:Tr Fwd.Add}" VerticalAlignment="Bottom"
-                            Style="{DynamicResource AccentButtonStyle}" MinWidth="100" Click="OnAdd" />
+                    <StackPanel Grid.Column="8" Orientation="Horizontal" VerticalAlignment="Bottom">
+                        <Button x:Name="CancelEditButton" Content="{l:Tr Common.Cancel}" MinWidth="90" Margin="0,0,8,0" Click="OnCancelEdit" Visibility="Collapsed" />
+                        <Button x:Name="AddButton" Content="{l:Tr Fwd.Add}" Style="{DynamicResource AccentButtonStyle}" MinWidth="100" Click="OnAdd" />
+                    </StackPanel>
                 </Grid>
             </StackPanel>
         </Border>
@@ -78,6 +96,7 @@
                 <Button x:Name="PersistButton" Content="{l:Tr Fwd.InstallPersist}" Click="OnInstallPersistence" Visibility="Collapsed"
                         Style="{StaticResource DialogButton}" />
                 <Button x:Name="RefreshButton" Content="{l:Tr Fwd.Refresh}" Click="OnRefresh" Style="{StaticResource DialogButton}" />
+                <Button x:Name="EditButton" Content="{l:Tr Fwd.Edit}" Click="OnEdit" Style="{StaticResource DialogButton}" />
                 <Button x:Name="DeleteButton" Content="{l:Tr Fwd.Delete}" Click="OnDelete" Style="{StaticResource DialogButton}" />
                 <Button Content="{l:Tr Common.Close}" IsCancel="True" Click="OnClose" Style="{StaticResource DialogButton}" />
             </StackPanel>

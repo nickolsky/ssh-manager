@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows;
+using SshManager.Core.Forwarding;
 using SshManager.Core.Models;
 using SshManager.Core.Monitoring;
 using SshManager.Mvvm;
@@ -392,9 +393,16 @@ public sealed class ServerNode : TreeNode
         if (f.Forwards.Count > 0 || incoming.Count > 0)
         {
             var fw = Section("forwards", L.F("Tree.ForwardsSection", f.Forwards.Count + incoming.Count), "");
-            foreach (var p in f.Forwards) fw.Children.Add(new ForwardNode(level + 1, _vm.DescribeForward(p), p, fw));
+            foreach (var p in f.Forwards)
+                fw.Children.Add(new ForwardNode(level + 1, _vm.DescribeForward(Entry, p), p, fw)
+                {
+                    Peer = _vm.ServerByIp(p.TargetIp), Chain = ForwardChains.FormatLines(_vm.ForwardChain(Entry, p)),
+                });
             foreach (var (from, p) in incoming)
-                fw.Children.Add(new ForwardNode(level + 1, L.F("Tree.Incoming", from.Name, p.Protocol, p.ListenPort, p.EffectiveTargetPort), null, fw));
+                fw.Children.Add(new ForwardNode(level + 1, L.F("Tree.Incoming", from.Name, p.Protocol, p.ListenPort, p.EffectiveTargetPort), null, fw)
+                {
+                    Peer = from, Chain = ForwardChains.FormatLines(_vm.ForwardChain(from, p)),
+                });
         }
 
         AddPorts(f);
@@ -564,8 +572,12 @@ public sealed class ForwardNode : TreeNode
 
     /// <summary>Null for incoming forwards (defined on another server).</summary>
     public PortForward? Forward { get; }
+    /// <summary>The other end: the target server of an outgoing forward, the source of an incoming one (null when not in SSH Manager).</summary>
+    public ServerEntry? Peer { get; init; }
+    /// <summary>The whole chain, one hop per line.</summary>
+    public string? Chain { get; init; }
     public override string Title => _text;
-    public override string? Tip => _text;
+    public override string? Tip => Chain is { } c && c.Contains('\n') ? c : _text;
     public override string Icon => Forward == null ? "" : ""; // back / forward arrows
     public override string Address => Forward == null ? "" : Forward.Managed ? "SSH Manager" : L.Get("Fwd.External");
     public override bool IsMuted => Forward == null;

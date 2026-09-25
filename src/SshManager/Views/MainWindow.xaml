@@ -108,6 +108,14 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
+        <Style x:Key="MiForwardPeer" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SelectionKind}" Value="forward">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
         <Style x:Key="MiGroup" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
             <Setter Property="Visibility" Value="Collapsed" />
             <Style.Triggers>
@@ -469,6 +477,7 @@
                                     <MenuItem Header="{l:Tr Ctx.Install}" Style="{StaticResource MiServer}"
                                               ItemsSource="{Binding InstallItems}" ItemContainerStyle="{StaticResource InstallItem}" />
                                     <MenuItem Header="{l:Tr Ctx.InstallDocker}" Command="{Binding InstallDockerCommand}" Style="{StaticResource MiServer}" />
+                                    <MenuItem Header="{Binding ForwardPeerHeader}" Command="{Binding GoToForwardPeerCommand}" FontWeight="SemiBold" Style="{StaticResource MiForwardPeer}" />
                                     <MenuItem Header="{l:Tr Ctx.PortForwards}" Command="{Binding PortForwardsCommand}" Style="{StaticResource MiForward}" />
                                     <MenuItem Header="{l:Tr Ctx.MonitorPort}" Command="{Binding TogglePortCommand}" FontWeight="SemiBold" Style="{StaticResource MiPortOff}" />
                                     <MenuItem Header="{l:Tr Ctx.UnmonitorPort}" Command="{Binding TogglePortCommand}" Style="{StaticResource MiPortOn}" />

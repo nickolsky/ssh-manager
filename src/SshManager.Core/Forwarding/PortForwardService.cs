@@ -23,6 +23,14 @@ public sealed class PortForwardService(VaultService vault, SshClientFactory ssh)
         return Execute(server, script, log);
     }
 
+    /// <summary>Changes a forward (removed and added again in one script; the old one comes back when adding fails).</summary>
+    public ForwardChange Replace(ServerEntry server, PortForward old, IReadOnlyList<string> protocols, string listenPort, string targetIp,
+        string targetPort, Action<string> log)
+    {
+        var script = IptablesCommands.Replace(old, protocols.Select(p => (IptablesCommands.NewId(), p)).ToList(), listenPort, targetIp, targetPort);
+        return Execute(server, script, log);
+    }
+
     public ForwardChange Remove(ServerEntry server, PortForward forward, Action<string> log) =>
         Execute(server, IptablesCommands.Remove(forward), log);
 
