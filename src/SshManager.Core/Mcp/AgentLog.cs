@@ -17,8 +17,39 @@ public sealed record AgentLogEntry(
         var local = Utc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
         var outcome = Outcome switch { AgentOutcome.Ok => "ok", AgentOutcome.Failed => "FAILED", _ => "DENIED" };
         return $"{local}  {Client}  {(ServerName.Length > 0 ? ServerName : "-")}  {Tool}  {outcome}  {Duration.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)}s" +
-               $"  {OneLine(Args, 400)}  → {OneLine(Result, AgentLog.MaxResultChars)}";
+               $"  {OneLine(Args, AgentLog.MaxArgsChars)}  → {OneLine(Result, AgentLog.MaxResultChars)}";
     }
+
+    /// <summary>A line written by <see cref="Format"/> back as an entry (line breaks restored), null for anything else.</summary>
+    public static AgentLogEntry? TryParse(string line)
+    {
+        var parts = line.Split("  ", 7);
+        if (parts.Length < 7 ||
+            !DateTime.TryParseExact(parts[0], "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var local))
+            return null;
+        AgentOutcome? outcome = parts[4] switch { "ok" => AgentOutcome.Ok, "FAILED" => AgentOutcome.Failed, "DENIED" => AgentOutcome.Denied, _ => null };
+        if (outcome == null || !parts[5].EndsWith('s') ||
+            !double.TryParse(parts[5][..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds))
+            return null;
+        var rest = parts[6];
+        string args, result;
+        if (rest.StartsWith("  → ", StringComparison.Ordinal)) // no arguments
+        {
+            args = "";
+            result = rest[4..];
+        }
+        else
+        {
+            var at = rest.IndexOf("  → ", StringComparison.Ordinal);
+            if (at < 0) return null;
+            args = rest[..at];
+            result = rest[(at + 4)..];
+        }
+        return new AgentLogEntry(local.ToUniversalTime(), null, parts[2] == "-" ? "" : parts[2], parts[1], parts[3],
+            Restore(args), outcome.Value, Restore(result), TimeSpan.FromSeconds(seconds));
+    }
+
+    private static string Restore(string s) => s.Replace(" ⏎ ", "\n");
 
     private static string OneLine(string s, int max)
     {
@@ -43,7 +74,8 @@ public enum AgentOutcome
 public sealed class AgentLog
 {
     public const string FolderName = "agent-logs";
-    public const int MaxResultChars = 1000;
+    public const int MaxResultChars = 4000;
+    public const int MaxArgsChars = 2000;
     private const string General = "general";
 
     private readonly string _dir;

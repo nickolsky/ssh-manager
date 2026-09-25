@@ -434,4 +434,58 @@ public class AgentLogTests
         Assert.True(line.Length < AgentLog.MaxResultChars + 600);
         Assert.EndsWith("…", line);
     }
+
+    [Fact]
+    public void Log_Lines_Read_Back_As_Entries()
+    {
+        var utc = new DateTime(2026, 9, 25, 6, 58, 37, DateTimeKind.Utc);
+        var e = new AgentLogEntry(utc, Guid.NewGuid(), "orange", "codex-probe", "run_command", "{\"command\":\"df -h\\nuptime\"}",
+            AgentOutcome.Failed, "exit 2: line 1\nline 2", TimeSpan.FromSeconds(9.24));
+        var back = AgentLogEntry.TryParse(e.Format());
+        Assert.NotNull(back);
+        Assert.Equal(utc, back.Utc);
+        Assert.Equal(("orange", "codex-probe", "run_command", AgentOutcome.Failed), (back.ServerName, back.Client, back.Tool, back.Outcome));
+        Assert.Equal("exit 2: line 1\nline 2", back.Result);
+        Assert.Equal(e.Args, back.Args);
+        Assert.Equal(9.2, back.Duration.TotalSeconds, 3);
+
+        var bare = AgentLogEntry.TryParse(new AgentLogEntry(utc, null, "", "c", "list_servers", "", AgentOutcome.Denied, "no", TimeSpan.Zero).Format());
+        Assert.Equal(("", "", "no", AgentOutcome.Denied), (bare!.ServerName, bare.Args, bare.Result, bare.Outcome));
+        Assert.Null(AgentLogEntry.TryParse("hand-written note"));
+    }
+
+    [Fact]
+    public void Console_Shows_Commands_And_Output_Like_A_Terminal()
+    {
+        var console = new AgentConsole();
+        var utc = DateTime.UtcNow;
+        var run = console.Render(new AgentLogEntry(utc, null, "orange", "codex", "run_command", "{\"command\":\"ls --color\",\"sudo\":true}",
+            AgentOutcome.Ok, "exit 1: \x1b[34mdir\x1b[0m\n\x1b[2Jgone\x1b]0;title\x07\rdone", TimeSpan.FromSeconds(1)));
+        Assert.Contains("──── ", run); // the day
+        Assert.Contains("codex@orange", run);
+        Assert.Contains("# \x1b[1mls --color", run); // sudo: root's prompt
+        Assert.Contains("\x1b[34mdir\x1b[0m\r\ngonedone", run); // colours stay, clear screen, title and \r go
+        Assert.DoesNotContain("\x1b[2J", run);
+        Assert.Contains("[exit 1]", run);
+
+        var tool = console.Render(new AgentLogEntry(utc, null, "orange", "codex", "service_logs", "{\"unit\":\"ssh\",\"lines\":5,\"grep\":\"a b\"}",
+            AgentOutcome.Ok, "{\"a\":1}", TimeSpan.FromSeconds(1)));
+        Assert.DoesNotContain("────", tool); // same day
+        Assert.Contains("service_logs", tool);
+        Assert.Contains("\x1b[90m--unit\x1b[0m \x1b[33mssh", tool); // arguments as options
+        Assert.Contains("'a b'", tool);
+        Assert.Contains("{\r\n  \"a\": 1\r\n}", tool); // JSON indented
+
+        // a command cut at the log's length limit still shows as a command
+        var cut = new AgentLogEntry(utc, null, "orange", "codex", "run_command", "{\"command\":\"" + new string('x', 3000) + "\"}",
+            AgentOutcome.Ok, "exit 0: ok", TimeSpan.Zero);
+        var shown = console.Render(AgentLogEntry.TryParse(cut.Format())!);
+        Assert.Contains("$ \x1b[1mxxxx", shown);
+        Assert.DoesNotContain("[exit", shown);
+
+        var denied = console.Render(new AgentLogEntry(utc, null, "orange", "codex", "run_command", "{\"command\":\"reboot\"}",
+            AgentOutcome.Denied, "read only", TimeSpan.Zero));
+        Assert.Contains("\x1b[31mread only", denied);
+        Assert.Contains("[denied]", denied);
+    }
 }

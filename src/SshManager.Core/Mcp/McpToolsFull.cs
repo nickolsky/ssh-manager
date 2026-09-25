@@ -67,7 +67,8 @@ public sealed partial class McpServer
             return ToolResult.Fail(L.F("Mcp.Timeout", (int)timeout.TotalSeconds));
         }
         var text = $"exit code: {r.ExitCode}\n--- stdout ---\n{Cut(r.Output)}" + (r.Error.Length > 0 ? $"\n--- stderr ---\n{Cut(r.Error, 20_000)}" : "");
-        return new ToolResult(text, IsError: false, LogText: $"exit {r.ExitCode}: " + (r.Output.Length > 0 ? r.Output : r.Error));
+        return new ToolResult(text, IsError: false, LogText: $"exit {r.ExitCode}: " +
+            string.Join("\n", new[] { r.Output.TrimEnd('\n'), r.Error.TrimEnd('\n') }.Where(o => o.Length > 0)));
     }
 
     private SftpFileSystem Sftp(ToolCall c)
